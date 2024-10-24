@@ -56,6 +56,12 @@ def _get_dataset_args(parser: argparse.ArgumentParser) -> None:
         help="The column of the dataset containing the instance prompt for each video. Or, the name of the file in `--data_root` folder containing the line-separated instance prompts.",
     )
     parser.add_argument(
+        "--tracking_column",
+        type=str,
+        default=None,
+        help="The column of the dataset containing the tracking map for each video. Or, the name of the file in `--data_root` folder containing the line-separated tracking maps.",
+    )
+    parser.add_argument(
         "--id_token",
         type=str,
         default=None,

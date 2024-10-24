@@ -1,0 +1,57 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "train_text_to_video_sft",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "training/cogvideox_text_to_video_sft.py",
+            "console": "integratedTerminal",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "2"
+            },
+            "args": [
+                "--pretrained_model_name_or_path", "THUDM/CogVideoX-5b",
+                "--data_root", "/home/lipeng/cogvideox-finetune/datasets/cogmira/",
+                "--tracking_column", "tracking.txt",
+                "--caption_column", "prompt.txt",
+                "--video_column", "videos.txt",
+                "--height_buckets", "480",
+                "--width_buckets", "720",
+                "--frame_buckets", "49",
+                "--dataloader_num_workers", "8",
+                "--pin_memory",
+                "--validation_prompt", "Tom, the mischievous gray cat, is sprawled out on a vibrant red pillow, his body relaxed and his eyes half-closed, as if he's just woken up or is about to doze off. His white paws are stretched out in front of him, and his tail is casually draped over the edge of the pillow. The setting appears to be a cozy corner of a room, with a warm yellow wall in the background and a hint of a wooden floor. The scene captures a rare moment of tranquility for Tom, contrasting with his usual energetic and playful demeanor:::A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical atmosphere of this unique musical performance",
+                "--validation_prompt_separator", ":::",
+                "--num_validation_videos", "1",
+                "--validation_epochs", "1",
+                "--seed", "42",
+                "--mixed_precision", "bf16",
+                "--output_dir", "/home/lipeng/cogvideox-finetune/ckpts/debug/",
+                "--max_num_frames", "49",
+                "--train_batch_size", "1",
+                "--max_train_steps", "20000",
+                "--checkpointing_steps", "2000",
+                "--gradient_accumulation_steps", "4",
+                "--gradient_checkpointing",
+                "--learning_rate", "1e-4",
+                "--lr_scheduler", "cosine_with_restarts",
+                "--lr_warmup_steps", "800",
+                "--lr_num_cycles", "1",
+                "--enable_slicing",
+                "--enable_tiling",
+                "--optimizer", "adamw",
+                "--beta1", "0.9",
+                "--beta2", "0.95",
+                "--weight_decay", "0.001",
+                "--max_grad_norm", "1.0",
+                "--allow_tf32",
+                "--report_to", "wandb",
+                "--nccl_timeout", "1800",
+            ]
+        }
+    ]
+}

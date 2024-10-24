@@ -20,7 +20,7 @@ import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 import diffusers
 import torch
@@ -53,10 +53,11 @@ from transformers import AutoTokenizer, T5EncoderModel
 
 
 from args import get_args  # isort:skip
-from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop  # isort:skip
+from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithResizeAndRectangleCrop, VideoDatasetWithResizingTracking  # isort:skip
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
+from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking, CogVideoXPipelineTracking
 
 logger = get_logger(__name__)
 
@@ -139,7 +140,7 @@ Please adhere to the licensing terms as described [here](https://huggingface.co/
 
 def log_validation(
     accelerator: Accelerator,
-    pipe: CogVideoXPipeline,
+    pipe: Union[CogVideoXPipeline, CogVideoXPipelineTracking],
     args: Dict[str, Any],
     pipeline_args: Dict[str, Any],
     epoch,
@@ -207,6 +208,28 @@ class CollateFunction:
             "prompts": prompts,
         }
 
+class CollateFunctionTracking:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        tracking_maps = [x["tracking_map"] for x in data[0]]
+        tracking_maps = torch.stack(tracking_maps).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "videos": videos,
+            "prompts": prompts,
+            "tracking_maps": tracking_maps,
+        }
 
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
@@ -283,13 +306,22 @@ def main(args):
     # CogVideoX-2b weights are stored in float16
     # CogVideoX-5b and CogVideoX-5b-I2V weights are stored in bfloat16
     load_dtype = torch.bfloat16 if "5b" in args.pretrained_model_name_or_path.lower() else torch.float16
-    transformer = CogVideoXTransformer3DModel.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="transformer",
-        torch_dtype=load_dtype,
-        revision=args.revision,
-        variant=args.variant,
-    )
+    if not args.tracking_column:
+        transformer = CogVideoXTransformer3DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            torch_dtype=load_dtype,
+            revision=args.revision,
+            variant=args.variant,
+        )
+    else:
+        transformer = CogVideoXTransformer3DModelTracking.from_pretrained(
+            args.pretrained_model_name_or_path,
+            torch_dtype=load_dtype,
+            revision=args.revision,
+            variant=args.variant,
+            num_tracking_blocks=4,
+        )
 
     vae = AutoencoderKLCogVideoX.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -461,6 +493,7 @@ def main(args):
         "data_root": args.data_root,
         "dataset_file": args.dataset_file,
         "caption_column": args.caption_column,
+        "tracking_column": args.tracking_column,
         "video_column": args.video_column,
         "max_num_frames": args.max_num_frames,
         "id_token": args.id_token,
@@ -471,19 +504,23 @@ def main(args):
         "random_flip": args.random_flip,
     }
     if args.video_reshape_mode is None:
-        train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
+        if args.tracking_column is not None:
+            train_dataset = VideoDatasetWithResizingTracking(**dataset_init_kwargs)
+        else:
+            train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
     else:
         train_dataset = VideoDatasetWithResizeAndRectangleCrop(
             video_reshape_mode=args.video_reshape_mode, **dataset_init_kwargs
         )
 
     collate_fn = CollateFunction(weight_dtype, args.load_tensors)
+    collate_fn_tracking = CollateFunctionTracking(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn,
+        collate_fn=collate_fn if args.tracking_column is None else collate_fn_tracking,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )
@@ -609,15 +646,20 @@ def main(args):
 
         for step, batch in enumerate(train_dataloader):
             models_to_accumulate = [transformer]
+            gradient_norm_before_clip = None
+            gradient_norm_after_clip = None
 
             with accelerator.accumulate(models_to_accumulate):
                 videos = batch["videos"].to(accelerator.device, non_blocking=True)
+                tracking_maps = batch["tracking_maps"].to(accelerator.device, non_blocking=True)
                 prompts = batch["prompts"]
 
                 # Encode videos
                 if not args.load_tensors:
                     videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                    tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     latent_dist = vae.encode(videos).latent_dist
+                    tracking_latent_dist = vae.encode(tracking_maps).latent_dist
                 else:
                     latent_dist = DiagonalGaussianDistribution(videos)
 
@@ -625,6 +667,10 @@ def main(args):
                 videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
                 videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
                 model_input = videos
+
+                tracking_maps = tracking_latent_dist.sample() * VAE_SCALING_FACTOR
+                tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                tracking_maps = tracking_maps.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
                 # Encode prompts
                 if not args.load_tensors:
@@ -672,14 +718,24 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_model_input = scheduler.add_noise(model_input, noise, timesteps)
 
-                # Predict the noise residual
-                model_output = transformer(
-                    hidden_states=noisy_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep=timesteps,
-                    image_rotary_emb=image_rotary_emb,
-                    return_dict=False,
-                )[0]
+                if args.tracking_column is None:
+                    # Predict the noise residual
+                    model_output = transformer(
+                        hidden_states=noisy_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep=timesteps,
+                        image_rotary_emb=image_rotary_emb,
+                        return_dict=False,
+                    )[0]
+                else:
+                    model_output = transformer(
+                        hidden_states=noisy_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        tracking_maps=tracking_maps,
+                        timestep=timesteps,
+                        image_rotary_emb=image_rotary_emb,
+                        return_dict=False,
+                    )[0]
 
                 model_pred = scheduler.get_velocity(model_output, noisy_model_input, timesteps)
 
@@ -756,19 +812,29 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
+            if args.validation_prompt is not None and ((epoch + 1) % args.validation_epochs == 0 or epoch == 0):
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
 
-                pipe = CogVideoXPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    transformer=unwrap_model(transformer),
-                    scheduler=scheduler,
-                    revision=args.revision,
-                    variant=args.variant,
-                    torch_dtype=weight_dtype,
-                )
+                if args.tracking_column is None:
+                    pipe = CogVideoXPipeline.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        transformer=unwrap_model(transformer),
+                        scheduler=scheduler,
+                        revision=args.revision,
+                        variant=args.variant,
+                        torch_dtype=weight_dtype,
+                    )
+                else:
+                    pipe = CogVideoXPipelineTracking.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        transformer=unwrap_model(transformer),
+                        scheduler=scheduler,
+                        revision=args.revision,
+                        variant=args.variant,
+                        torch_dtype=weight_dtype,
+                    )
 
                 if args.enable_slicing:
                     pipe.vae.enable_slicing()
@@ -777,25 +843,44 @@ def main(args):
                 if args.enable_model_cpu_offload:
                     pipe.enable_model_cpu_offload()
 
-                validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-                for validation_prompt in validation_prompts:
-                    pipeline_args = {
-                        "prompt": validation_prompt,
-                        "guidance_scale": args.guidance_scale,
-                        "use_dynamic_cfg": args.use_dynamic_cfg,
-                        "height": args.height,
-                        "width": args.width,
-                        "max_sequence_length": model_config.max_text_seq_length,
-                    }
-
-                    log_validation(
-                        accelerator=accelerator,
-                        pipe=pipe,
-                        args=args,
-                        pipeline_args=pipeline_args,
-                        epoch=epoch,
-                        is_final_validation=False,
-                    )
+                if args.tracking_column is None:
+                    validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
+                    for validation_prompt in validation_prompts:
+                        pipeline_args = {
+                            "prompt": validation_prompt,
+                            "guidance_scale": args.guidance_scale,
+                            "use_dynamic_cfg": args.use_dynamic_cfg,
+                            "height": args.height,
+                            "width": args.width,
+                            "max_sequence_length": model_config.max_text_seq_length,
+                        }
+                        log_validation(
+                            accelerator=accelerator,
+                            pipe=pipe,
+                            args=args,
+                            pipeline_args=pipeline_args,
+                            epoch=epoch,
+                            is_final_validation=False,
+                        )
+                else:
+                    validation_prompts = prompts
+                    for i, validation_prompt in enumerate(validation_prompts):
+                        pipeline_args = {
+                            "prompt": validation_prompt,
+                            "tracking_maps": tracking_maps,
+                            "guidance_scale": args.guidance_scale,
+                            "use_dynamic_cfg": args.use_dynamic_cfg,
+                            "height": args.height,
+                            "width": args.width,
+                        }
+                        log_validation(
+                            accelerator=accelerator,
+                            pipe=pipe,
+                            args=args,
+                            pipeline_args=pipeline_args,
+                            epoch=epoch,
+                            is_final_validation=False,
+                        )
 
                 accelerator.print("===== Memory after validation =====")
                 print_memory(accelerator.device)
@@ -840,12 +925,20 @@ def main(args):
         reset_memory(accelerator.device)
 
         # Final test inference
-        pipe = CogVideoXPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            revision=args.revision,
-            variant=args.variant,
-            torch_dtype=weight_dtype,
-        )
+        if args.tracking_column is None:
+            pipe = CogVideoXPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                revision=args.revision,
+                variant=args.variant,
+                torch_dtype=weight_dtype,
+            )
+        else:
+            pipe = CogVideoXPipelineTracking.from_pretrained(
+                args.pretrained_model_name_or_path,
+                revision=args.revision,
+                variant=args.variant,
+                torch_dtype=weight_dtype,
+            )
         pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config)
 
         if args.enable_slicing:
@@ -860,13 +953,24 @@ def main(args):
         if args.validation_prompt and args.num_validation_videos > 0:
             validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
             for validation_prompt in validation_prompts:
-                pipeline_args = {
-                    "prompt": validation_prompt,
-                    "guidance_scale": args.guidance_scale,
-                    "use_dynamic_cfg": args.use_dynamic_cfg,
-                    "height": args.height,
-                    "width": args.width,
-                }
+                if args.tracking_column is None:
+                    pipeline_args = {
+                        "prompt": validation_prompt,
+                        "guidance_scale": args.guidance_scale,
+                        "use_dynamic_cfg": args.use_dynamic_cfg,
+                        "height": args.height,
+                        "width": args.width,
+                        "max_sequence_length": model_config.max_text_seq_length,
+                    }
+                else:
+                    pipeline_args = {
+                        "prompt": validation_prompt,
+                        "tracking_maps": tracking_maps,
+                        "guidance_scale": args.guidance_scale,
+                        "use_dynamic_cfg": args.use_dynamic_cfg,
+                        "height": args.height,
+                        "width": args.width,
+                    }
 
                 video = log_validation(
                     accelerator=accelerator,
@@ -905,3 +1009,4 @@ def main(args):
 if __name__ == "__main__":
     args = get_args()
     main(args)
+
