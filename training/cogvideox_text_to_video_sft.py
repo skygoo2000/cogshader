@@ -18,6 +18,7 @@ import logging
 import math
 import os
 import shutil
+import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, Union
@@ -57,6 +58,9 @@ from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithRes
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(current_dir, '..'))
 from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking, CogVideoXPipelineTracking
 
 logger = get_logger(__name__)
@@ -317,6 +321,7 @@ def main(args):
     else:
         transformer = CogVideoXTransformer3DModelTracking.from_pretrained(
             args.pretrained_model_name_or_path,
+            subfolder="transformer",
             torch_dtype=load_dtype,
             revision=args.revision,
             variant=args.variant,
