@@ -34,26 +34,83 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
     def __init__(
         self,
         num_tracking_blocks: Optional[int] = 13,
+        num_attention_heads: int = 30,
+        attention_head_dim: int = 64,
+        in_channels: int = 16,
+        out_channels: Optional[int] = 16,
+        flip_sin_to_cos: bool = True,
+        freq_shift: int = 0,
+        time_embed_dim: int = 512,
+        text_embed_dim: int = 4096,
+        num_layers: int = 30,
+        dropout: float = 0.0,
+        attention_bias: bool = True,
+        sample_width: int = 90,
+        sample_height: int = 60,
+        sample_frames: int = 49,
+        patch_size: int = 2,
+        temporal_compression_ratio: int = 4,
+        max_text_seq_length: int = 226,
+        activation_fn: str = "gelu-approximate",
+        timestep_activation_fn: str = "silu",
+        norm_elementwise_affine: bool = True,
+        norm_eps: float = 1e-5,
+        spatial_interpolation_scale: float = 1.875,
+        temporal_interpolation_scale: float = 1.0,
+        use_rotary_positional_embeddings: bool = False,
+        use_learned_positional_embeddings: bool = False,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__(
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            flip_sin_to_cos=flip_sin_to_cos,
+            freq_shift=freq_shift,
+            time_embed_dim=time_embed_dim,
+            text_embed_dim=text_embed_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+            attention_bias=attention_bias,
+            sample_width=sample_width,
+            sample_height=sample_height,
+            sample_frames=sample_frames,
+            patch_size=patch_size,
+            temporal_compression_ratio=temporal_compression_ratio,
+            max_text_seq_length=max_text_seq_length,
+            activation_fn=activation_fn,
+            timestep_activation_fn=timestep_activation_fn,
+            norm_elementwise_affine=norm_elementwise_affine,
+            norm_eps=norm_eps,
+            spatial_interpolation_scale=spatial_interpolation_scale,
+            temporal_interpolation_scale=temporal_interpolation_scale,
+            use_rotary_positional_embeddings=use_rotary_positional_embeddings,
+            use_learned_positional_embeddings=use_learned_positional_embeddings,
+            **kwargs
+        )
 
-        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
+        inner_dim = num_attention_heads * attention_head_dim
 
         # Ensure num_tracking_blocks is not greater than num_layers
-        if num_tracking_blocks > self.config.num_layers:
+        if num_tracking_blocks > num_layers:
             raise ValueError("num_tracking_blocks must be less than or equal to num_layers")
 
         # Create linear layers for combining hidden states and tracking maps
         self.combine_linears = nn.ModuleList(
-            [nn.Linear(self.inner_dim, self.inner_dim) for _ in range(num_tracking_blocks)]
+            [nn.Linear(inner_dim, inner_dim) for _ in range(num_tracking_blocks)]
         )
+
+        # Initialize weights of combine_linears to zero
+        for linear in self.combine_linears:
+            linear.weight.data.zero_()
+            linear.bias.data.zero_()
 
         # Create transformer blocks for processing tracking maps
         self.transformer_blocks_copy = nn.ModuleList(
             [
                 CogVideoXBlock(
-                    dim=self.inner_dim,
+                    dim=inner_dim,
                     num_attention_heads=self.config.num_attention_heads,
                     attention_head_dim=self.config.attention_head_dim,
                     time_embed_dim=self.config.time_embed_dim,
@@ -68,7 +125,9 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
         )
 
         # For initial combination of hidden states and tracking maps
-        self.initial_combine_linear = nn.Linear(self.inner_dim, self.inner_dim)
+        self.initial_combine_linear = nn.Linear(inner_dim, inner_dim)
+        self.initial_combine_linear.weight.data.zero_()
+        self.initial_combine_linear.bias.data.zero_()
 
     def forward(
         self,
@@ -416,4 +475,5 @@ class CogVideoXPipelineTracking(CogVideoXPipeline):
             return (video,)
 
         return CogVideoXPipelineOutput(frames=video)
+
 
