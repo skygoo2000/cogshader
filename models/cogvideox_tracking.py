@@ -266,40 +266,56 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
+        # Separate loading args from model init args
+        load_kwargs = {
+            'subfolder': kwargs.pop('subfolder', None),
+            'revision': kwargs.pop('revision', None),
+            'variant': kwargs.pop('variant', None),
+            'torch_dtype': kwargs.pop('torch_dtype', None),
+        }
+        load_kwargs = {k: v for k, v in load_kwargs.items() if v is not None}
 
-        num_tracking_blocks = kwargs.pop("num_tracking_blocks", 13)
+        # First, try to load the model as CogVideoXTransformer3DModelTracking
+        try:
+            model = super().from_pretrained(pretrained_model_name_or_path, **load_kwargs, **kwargs)
+            print("Loaded CogVideoXTransformer3DModelTracking checkpoint directly.")
+            return model
+        except Exception as e:
+            print(f"Failed to load as CogVideoXTransformer3DModelTracking: {e}")
+            print("Attempting to load as CogVideoXTransformer3DModel and convert...")
+
+        # Load pretrained weights using CogVideoXTransformer3DModel
+        base_model = CogVideoXTransformer3DModel.from_pretrained(pretrained_model_name_or_path, **load_kwargs)
         
-        # Call the original from_pretrained method
-        model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+        # Prepare the arguments for the new model
+        model_kwargs = dict(base_model.config)
+        model_kwargs.update(kwargs)
         
-        # Check if the loaded state dict contains the new modules
-        state_dict = model.state_dict()
-        new_modules = ['initial_combine_linear', 'transformer_blocks_copy', 'combine_linears']
-        missing_modules = [module for module in new_modules if not any(module in key for key in state_dict.keys())]
+        # Ensure num_tracking_blocks is set
+        num_tracking_blocks = model_kwargs.setdefault('num_tracking_blocks', 13)
+        
+        # Remove any loading args that might have been added to model_kwargs
+        for key in load_kwargs.keys():
+            model_kwargs.pop(key, None)
+        
+        # Create CogVideoXTransformer3DModelTracking instance
+        model = cls(**model_kwargs)
+        
+        # Load base model weights
+        model.load_state_dict(base_model.state_dict(), strict=False)
 
-        if missing_modules:
-            print(f"Initializing new modules: {', '.join(missing_modules)}")
+        # Initialize initial_combine_linear with zeros
+        model.initial_combine_linear.weight.data.zero_()
+        model.initial_combine_linear.bias.data.zero_()
 
-            # Initialize initial_combine_linear with zeros if missing
-            if 'initial_combine_linear' in missing_modules:
-                model.initial_combine_linear.weight.data.zero_()
-                model.initial_combine_linear.bias.data.zero_()
+        # Initialize combine_linears with zeros
+        for linear in model.combine_linears:
+            linear.weight.data.zero_()
+            linear.bias.data.zero_()
 
-            # Initialize combine_linears with zeros if missing
-            if 'combine_linears' in missing_modules:
-                for linear in model.combine_linears:
-                    linear.weight.data.zero_()
-                    linear.bias.data.zero_()
-
-            # Copy weights from transformer_blocks to transformer_blocks_copy if missing
-            if 'transformer_blocks_copy' in missing_modules:
-                num_copy_blocks = len(model.transformer_blocks_copy)
-                for i in range(num_copy_blocks):
-                    model.transformer_blocks_copy[i].load_state_dict(model.transformer_blocks[i].state_dict())
-
-            print("Initialization of new modules completed.")
-        else:
-            print("All modules found in the checkpoint. Loading normally.")
+        # Copy weights from transformer_blocks to transformer_blocks_copy
+        for i in range(num_tracking_blocks):
+            model.transformer_blocks_copy[i].load_state_dict(model.transformer_blocks[i].state_dict())
 
         return model
 
@@ -475,5 +491,7 @@ class CogVideoXPipelineTracking(CogVideoXPipeline):
             return (video,)
 
         return CogVideoXPipelineOutput(frames=video)
+
+
 
 

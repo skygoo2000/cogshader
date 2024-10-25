@@ -13,8 +13,8 @@
             "justMyCode": false,
             "env": {
                 "CUDA_VISIBLE_DEVICES": "2",
-                // "NCCL_P2P_DISABLE": "1",
-                // "NCCL_IB_DISABLE": "1"
+                "NCCL_P2P_DISABLE": "1",
+                "NCCL_IB_DISABLE": "1"
             },
             "args": [
                 "--pretrained_model_name_or_path", "THUDM/CogVideoX-5b",
