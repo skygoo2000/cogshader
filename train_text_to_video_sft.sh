@@ -7,7 +7,7 @@ export WANDB_MODE="offline"
 export NCCL_P2P_DISABLE=1
 export TORCH_NCCL_ENABLE_MONITORING=0
 
-GPU_IDS="7"
+GPU_IDS="0,1"
 
 # Training Configurations
 # Experiment with as many hyperparameters as you want!
@@ -25,7 +25,7 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_1.yaml"
 DATA_ROOT="/home/lipeng/cogvideox-finetune/datasets/cogmira/"
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
-
+TRACKING_COLUMN="tracking.txt"
 # Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
@@ -34,10 +34,11 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
         output_dir="/home/lipeng/cogvideox-finetune/ckpts/cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS training/cogvideox_text_to_video_sft.py \
-          --pretrained_model_name_or_path THUDM/CogVideoX-5b \
+          --pretrained_model_name_or_path THUDM/CogVideoX-2b \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
+          --tracking_column $TRACKING_COLUMN \
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \

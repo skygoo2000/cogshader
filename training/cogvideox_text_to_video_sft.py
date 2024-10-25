@@ -494,24 +494,37 @@ def main(args):
     )
 
     # Dataset and DataLoader
-    dataset_init_kwargs = {
-        "data_root": args.data_root,
-        "dataset_file": args.dataset_file,
-        "caption_column": args.caption_column,
-        "tracking_column": args.tracking_column,
-        "video_column": args.video_column,
-        "max_num_frames": args.max_num_frames,
-        "id_token": args.id_token,
-        "height_buckets": args.height_buckets,
-        "width_buckets": args.width_buckets,
-        "frame_buckets": args.frame_buckets,
-        "load_tensors": args.load_tensors,
-        "random_flip": args.random_flip,
-    }
     if args.video_reshape_mode is None:
         if args.tracking_column is not None:
+            dataset_init_kwargs = {
+                "data_root": args.data_root,
+                "dataset_file": args.dataset_file,
+                "caption_column": args.caption_column,
+                "tracking_column": args.tracking_column,
+                "video_column": args.video_column,
+                "max_num_frames": args.max_num_frames,
+                "id_token": args.id_token,
+                "height_buckets": args.height_buckets,
+                "width_buckets": args.width_buckets,
+                "frame_buckets": args.frame_buckets,
+                "load_tensors": args.load_tensors,
+                "random_flip": args.random_flip,
+            }   
             train_dataset = VideoDatasetWithResizingTracking(**dataset_init_kwargs)
         else:
+            dataset_init_kwargs = {
+                "data_root": args.data_root,
+                "dataset_file": args.dataset_file,
+                "caption_column": args.caption_column,
+                "video_column": args.video_column,
+                "max_num_frames": args.max_num_frames,
+                "id_token": args.id_token,
+                "height_buckets": args.height_buckets,
+                "width_buckets": args.width_buckets,
+                "frame_buckets": args.frame_buckets,
+                "load_tensors": args.load_tensors,
+                "random_flip": args.random_flip,
+            } 
             train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
     else:
         train_dataset = VideoDatasetWithResizeAndRectangleCrop(
@@ -656,15 +669,17 @@ def main(args):
 
             with accelerator.accumulate(models_to_accumulate):
                 videos = batch["videos"].to(accelerator.device, non_blocking=True)
-                tracking_maps = batch["tracking_maps"].to(accelerator.device, non_blocking=True)
+                if args.tracking_column is not None:
+                    tracking_maps = batch["tracking_maps"].to(accelerator.device, non_blocking=True)
                 prompts = batch["prompts"]
 
                 # Encode videos
                 if not args.load_tensors:
                     videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
-                    tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     latent_dist = vae.encode(videos).latent_dist
-                    tracking_latent_dist = vae.encode(tracking_maps).latent_dist
+                    if args.tracking_column is not None:
+                        tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                        tracking_latent_dist = vae.encode(tracking_maps).latent_dist
                 else:
                     latent_dist = DiagonalGaussianDistribution(videos)
 
@@ -673,9 +688,10 @@ def main(args):
                 videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
                 model_input = videos
 
-                tracking_maps = tracking_latent_dist.sample() * VAE_SCALING_FACTOR
-                tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                tracking_maps = tracking_maps.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+                if args.tracking_column is not None:
+                    tracking_maps = tracking_latent_dist.sample() * VAE_SCALING_FACTOR
+                    tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                    tracking_maps = tracking_maps.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
                 # Encode prompts
                 if not args.load_tensors:
@@ -817,7 +833,7 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and ((epoch + 1) % args.validation_epochs == 0 or epoch == 0):
+            if (args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0) or (args.validation_prompt is not None and epoch == 0):
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
@@ -868,7 +884,7 @@ def main(args):
                             is_final_validation=False,
                         )
                 else:
-                    validation_prompts = prompts
+                    validation_prompts = prompts[0]
                     for i, validation_prompt in enumerate(validation_prompts):
                         pipeline_args = {
                             "prompt": validation_prompt,

@@ -12,13 +12,13 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "CUDA_VISIBLE_DEVICES": "2",
-                "NCCL_P2P_DISABLE": "1",
-                "NCCL_IB_DISABLE": "1"
+                "CUDA_VISIBLE_DEVICES": "0",
+                // "NCCL_P2P_DISABLE": "1",
+                // "NCCL_IB_DISABLE": "1"
             },
             "args": [
-                "--pretrained_model_name_or_path", "THUDM/CogVideoX-5b",
-                "--data_root", "/home/lipeng/code/cogvideox-finetune/datasets/cogmira",
+                "--pretrained_model_name_or_path", "THUDM/CogVideoX-2b",
+                "--data_root", "/home/lipeng/cogvideox-finetune/datasets/cogmira",
                 "--tracking_column", "tracking.txt",
                 "--caption_column", "prompt.txt",
                 "--video_column", "videos.txt",
@@ -33,7 +33,7 @@
                 "--validation_epochs", "1",
                 "--seed", "42",
                 "--mixed_precision", "bf16",
-                "--output_dir", "/home/lipeng/code/cogvideox-finetune/ckpts/debug",
+                "--output_dir", "/home/lipeng/cogvideox-finetune/ckpts/debug",
                 "--max_num_frames", "49",
                 "--train_batch_size", "1",
                 "--max_train_steps", "20000",

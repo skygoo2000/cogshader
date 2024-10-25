@@ -18,6 +18,9 @@ from diffusers.models.transformers.cogvideox_transformer_3d import CogVideoXBloc
 from diffusers.pipelines.cogvideo.pipeline_cogvideox import CogVideoXPipeline, CogVideoXPipelineOutput
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.pipelines.cogvideo.pipeline_cogvideox import retrieve_timesteps
+from transformers import T5EncoderModel, T5Tokenizer
+from diffusers.models import AutoencoderKLCogVideoX, CogVideoXTransformer3DModel
+from diffusers.schedulers import CogVideoXDDIMScheduler, CogVideoXDPMScheduler
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -129,6 +132,22 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
         self.initial_combine_linear.weight.data.zero_()
         self.initial_combine_linear.bias.data.zero_()
 
+        # Freeze all parameters
+        for param in self.parameters():
+            param.requires_grad = False
+        
+        # Unfreeze parameters that need to be trained
+        for linear in self.combine_linears:
+            for param in linear.parameters():
+                param.requires_grad = True
+        
+        for block in self.transformer_blocks_copy:
+            for param in block.parameters():
+                param.requires_grad = True
+        
+        for param in self.initial_combine_linear.parameters():
+            param.requires_grad = True
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -171,16 +190,16 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
         hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
         hidden_states = self.embedding_dropout(hidden_states)
 
-        text_seq_length = encoder_hidden_states.shape[1]
-        encoder_hidden_states = hidden_states[:, :text_seq_length]
-        hidden_states = hidden_states[:, text_seq_length:]
-
         # Process tracking maps
         prompt_embed = encoder_hidden_states.clone()
         tracking_maps_hidden_states = self.patch_embed(prompt_embed, tracking_maps)
         tracking_maps_hidden_states = self.embedding_dropout(tracking_maps_hidden_states)
-        tracking_maps = tracking_maps_hidden_states[:, text_seq_length:]
         del prompt_embed
+
+        text_seq_length = encoder_hidden_states.shape[1]
+        encoder_hidden_states = hidden_states[:, :text_seq_length]
+        hidden_states = hidden_states[:, text_seq_length:]
+        tracking_maps = tracking_maps_hidden_states[:, text_seq_length:]
 
         # Combine hidden states and tracking maps initially
         combined = hidden_states + tracking_maps
@@ -317,12 +336,40 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel):
         for i in range(num_tracking_blocks):
             model.transformer_blocks_copy[i].load_state_dict(model.transformer_blocks[i].state_dict())
 
+        # Freeze all parameters
+        for param in model.parameters():
+            param.requires_grad = False
+        
+        # Unfreeze parameters that need to be trained
+        for linear in model.combine_linears:
+            for param in linear.parameters():
+                param.requires_grad = True
+        
+        for block in model.transformer_blocks_copy:
+            for param in block.parameters():
+                param.requires_grad = True
+        
+        for param in model.initial_combine_linear.parameters():
+            param.requires_grad = True
+
+        # # Print the status of each parameter
+        # for name, param in model.named_parameters():
+        #     status = "trainable" if param.requires_grad else "frozen"
+        #     print(f"Parameter: {name}, Status: {status}")
+        
         return model
 
 class CogVideoXPipelineTracking(CogVideoXPipeline):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        tokenizer: T5Tokenizer,
+        text_encoder: T5EncoderModel,
+        vae: AutoencoderKLCogVideoX,
+        transformer: CogVideoXTransformer3DModelTracking,
+        scheduler: Union[CogVideoXDDIMScheduler, CogVideoXDPMScheduler],
+    ):
+        super().__init__(tokenizer, text_encoder, vae, transformer, scheduler)
         
         if not isinstance(self.transformer, CogVideoXTransformer3DModelTracking):
             raise ValueError("The transformer in this pipeline must be of type CogVideoXTransformer3DModelTracking")
@@ -429,6 +476,7 @@ class CogVideoXPipelineTracking(CogVideoXPipeline):
                     continue
 
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                tracking_maps_latent = torch.cat([tracking_maps] * 2) if do_classifier_free_guidance else tracking_maps
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 timestep = t.expand(latent_model_input.shape[0])
@@ -439,7 +487,7 @@ class CogVideoXPipelineTracking(CogVideoXPipeline):
                     timestep=timestep,
                     image_rotary_emb=image_rotary_emb,
                     attention_kwargs=attention_kwargs,
-                    tracking_maps=tracking_maps,
+                    tracking_maps=tracking_maps_latent,
                     return_dict=False,
                 )[0]
                 noise_pred = noise_pred.float()
@@ -491,7 +539,5 @@ class CogVideoXPipelineTracking(CogVideoXPipeline):
             return (video,)
 
         return CogVideoXPipelineOutput(frames=video)
-
-
 
 
