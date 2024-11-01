@@ -172,4 +172,6 @@ dump*
 !requirements.txt
 env/
 datasets/
+validation/
 ckpts/
+.vscode/

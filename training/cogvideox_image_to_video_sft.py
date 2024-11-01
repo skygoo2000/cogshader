@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import sys
+import random
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, Union, Optional
@@ -60,13 +61,16 @@ from dataset import BucketSampler, VideoDatasetWithResizing, VideoDatasetWithRes
 from text_encoder import compute_prompt_embeddings  # isort:skip
 from utils import get_gradient_norm, get_optimizer, prepare_rotary_positional_embeddings, print_memory, reset_memory  # isort:skip
 
+from diffusers.utils import load_image
+from diffusers.pipelines.cogvideo.pipeline_cogvideox_image2video import CogVideoXImageToVideoPipeline
+
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
+from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking
 from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking, CogVideoXPipelineTracking
 
 logger = get_logger(__name__)
-
 
 def save_model_card(
     repo_id: str,
@@ -165,7 +169,6 @@ def log_validation(
     if tracking_map_path and args.load_tensors is False:
         from torchvision.transforms.functional import resize
         from torchvision import transforms
-
         
         video_transforms = transforms.Compose(
             [
@@ -185,6 +188,9 @@ def log_validation(
         tracking_frames = tracking_frames.permute(0, 3, 1, 2).contiguous()
         tracking_frames_resized = torch.stack([resize(tracking_frame, nearest_res) for tracking_frame in tracking_frames], dim=0)
         tracking_frames = torch.stack([video_transforms(tracking_frame) for tracking_frame in tracking_frames_resized], dim=0)
+
+        tracking_image = tracking_frames[:1].clone()
+        pipeline_args["tracking_image"] = tracking_image
         
         # vae encode tracking_frames from path
         with torch.no_grad():
@@ -273,6 +279,33 @@ class CollateFunctionTracking:
         tracking_maps = torch.stack(tracking_maps).to(dtype=self.weight_dtype, non_blocking=True)
 
         return {
+            "videos": videos,
+            "prompts": prompts,
+            "tracking_maps": tracking_maps,
+        }
+
+class CollateFunctionImageTracking:
+    def __init__(self, weight_dtype: torch.dtype, load_tensors: bool) -> None:
+        self.weight_dtype = weight_dtype
+        self.load_tensors = load_tensors
+
+    def __call__(self, data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        prompts = [x["prompt"] for x in data[0]]
+
+        if self.load_tensors:
+            prompts = torch.stack(prompts).to(dtype=self.weight_dtype, non_blocking=True)
+
+        images = [x["image"] for x in data[0]]
+        images = torch.stack(images).to(dtype=self.weight_dtype, non_blocking=True)
+
+        videos = [x["video"] for x in data[0]]
+        videos = torch.stack(videos).to(dtype=self.weight_dtype, non_blocking=True)
+
+        tracking_maps = [x["tracking_map"] for x in data[0]]
+        tracking_maps = torch.stack(tracking_maps).to(dtype=self.weight_dtype, non_blocking=True)
+
+        return {
+            "images": images,
             "videos": videos,
             "prompts": prompts,
             "tracking_maps": tracking_maps,
@@ -552,6 +585,7 @@ def main(args):
                 "frame_buckets": args.frame_buckets,
                 "load_tensors": args.load_tensors,
                 "random_flip": args.random_flip,
+                "image_to_video": True,
             }   
             train_dataset = VideoDatasetWithResizingTracking(**dataset_init_kwargs)
         else:
@@ -567,6 +601,7 @@ def main(args):
                 "frame_buckets": args.frame_buckets,
                 "load_tensors": args.load_tensors,
                 "random_flip": args.random_flip,
+                "image_to_video": True,
             } 
             train_dataset = VideoDatasetWithResizing(**dataset_init_kwargs)
     else:
@@ -576,12 +611,13 @@ def main(args):
 
     collate_fn = CollateFunction(weight_dtype, args.load_tensors)
     collate_fn_tracking = CollateFunctionTracking(weight_dtype, args.load_tensors)
+    collate_fn_image_tracking = CollateFunctionImageTracking(weight_dtype, args.load_tensors)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=1,
         sampler=BucketSampler(train_dataset, batch_size=args.train_batch_size, shuffle=True),
-        collate_fn=collate_fn if args.tracking_column is None else collate_fn_tracking,
+        collate_fn=collate_fn if args.tracking_column is None else collate_fn_image_tracking,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.pin_memory,
     )
@@ -712,24 +748,58 @@ def main(args):
 
             with accelerator.accumulate(models_to_accumulate):
                 videos = batch["videos"].to(accelerator.device, non_blocking=True)
+                images = batch["images"].to(accelerator.device, non_blocking=True)
+                prompts = batch["prompts"]
+
                 if args.tracking_column is not None:
                     tracking_maps = batch["tracking_maps"].to(accelerator.device, non_blocking=True)
-                prompts = batch["prompts"]
+                    tracking_image = tracking_maps[:,:1].clone()
 
                 # Encode videos
                 if not args.load_tensors:
                     videos = videos.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                     latent_dist = vae.encode(videos).latent_dist
+
+                    images = images.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                    image_noise_sigma = torch.normal(
+                        mean=-3.0, std=0.5, size=(images.size(0),), device=accelerator.device, dtype=weight_dtype
+                    )
+                    image_noise_sigma = torch.exp(image_noise_sigma)
+                    noisy_images = images + torch.randn_like(images) * image_noise_sigma[:, None, None, None, None]
+                    image_latent_dist = vae.encode(noisy_images).latent_dist
+
                     if args.tracking_column is not None:
                         tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
                         tracking_latent_dist = vae.encode(tracking_maps).latent_dist
+
+                        tracking_image = tracking_image.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+                        tracking_image_latent_dist = vae.encode(tracking_image).latent_dist
                 else:
                     latent_dist = DiagonalGaussianDistribution(videos)
+                    image_latent_dist = DiagonalGaussianDistribution(images)
 
-                videos = latent_dist.sample() * VAE_SCALING_FACTOR
-                videos = videos.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                videos = videos.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                model_input = videos
+                video_latents = latent_dist.sample() * VAE_SCALING_FACTOR
+                video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+
+                image_latents = image_latent_dist.sample() * VAE_SCALING_FACTOR
+                image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+                
+                padding_shape = (video_latents.shape[0], video_latents.shape[1] - 1, *video_latents.shape[2:])
+                latent_padding = image_latents.new_zeros(padding_shape)
+                image_latents = torch.cat([image_latents, latent_padding], dim=1)
+
+                tracking_image_latent_dist = tracking_image_latent_dist.sample() * VAE_SCALING_FACTOR
+                tracking_image_latent_dist = tracking_image_latent_dist.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                tracking_image_latent_dist = tracking_image_latent_dist.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+
+                tracking_latent_padding = tracking_image_latent_dist.new_zeros(padding_shape)
+                tracking_image_latents = torch.cat([tracking_image_latent_dist, tracking_latent_padding], dim=1)
+
+                if random.random() < args.noised_image_dropout:
+                    image_latents = torch.zeros_like(image_latents)
+                    tracking_image_latents = torch.zeros_like(tracking_image_latents)
 
                 if args.tracking_column is not None:
                     tracking_maps = tracking_latent_dist.sample() * VAE_SCALING_FACTOR
@@ -751,8 +821,8 @@ def main(args):
                     prompt_embeds = prompts.to(dtype=weight_dtype)
 
                 # Sample noise that will be added to the latents
-                noise = torch.randn_like(model_input)
-                batch_size, num_frames, num_channels, height, width = model_input.shape
+                noise = torch.randn_like(video_latents)
+                batch_size, num_frames, num_channels, height, width = video_latents.shape
 
                 # Sample a random timestep for each image
                 timesteps = torch.randint(
@@ -760,7 +830,7 @@ def main(args):
                     scheduler.config.num_train_timesteps,
                     (batch_size,),
                     dtype=torch.int64,
-                    device=model_input.device,
+                    device=accelerator.device,
                 )
 
                 # Prepare rotary embeds
@@ -780,10 +850,11 @@ def main(args):
 
                 # Add noise to the model input according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_model_input = scheduler.add_noise(model_input, noise, timesteps)
+                noisy_video_latents = scheduler.add_noise(video_latents, noise, timesteps)
+                noisy_model_input = torch.cat([noisy_video_latents, image_latents], dim=2)
+                tracking_latents = torch.cat([tracking_maps, tracking_image_latents], dim=2)
 
                 if args.tracking_column is None:
-                    # Predict the noise residual
                     model_output = transformer(
                         hidden_states=noisy_model_input,
                         encoder_hidden_states=prompt_embeds,
@@ -795,19 +866,19 @@ def main(args):
                     model_output = transformer(
                         hidden_states=noisy_model_input,
                         encoder_hidden_states=prompt_embeds,
-                        tracking_maps=tracking_maps,
+                        tracking_maps=tracking_latents,
                         timestep=timesteps,
                         image_rotary_emb=image_rotary_emb,
                         return_dict=False,
                     )[0]
 
-                model_pred = scheduler.get_velocity(model_output, noisy_model_input, timesteps)
+                model_pred = scheduler.get_velocity(model_output, noisy_video_latents, timesteps)
 
                 weights = 1 / (1 - alphas_cumprod[timesteps])
                 while len(weights.shape) < len(model_pred.shape):
                     weights = weights.unsqueeze(-1)
 
-                target = model_input
+                target = video_latents
 
                 loss = torch.mean(
                     (weights * (model_pred - target) ** 2).reshape(batch_size, -1),
@@ -883,7 +954,7 @@ def main(args):
                 transformer.eval()
 
                 if args.tracking_column is None:
-                    pipe = CogVideoXPipeline.from_pretrained(
+                    pipe = CogVideoXImageToVideoPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
                         transformer=unwrap_model(transformer),
                         scheduler=scheduler,
@@ -892,7 +963,7 @@ def main(args):
                         torch_dtype=weight_dtype,
                     )
                 else:
-                    pipe = CogVideoXPipelineTracking.from_pretrained(
+                    pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
                         args.pretrained_model_name_or_path,
                         transformer=unwrap_model(transformer),
                         scheduler=scheduler,
@@ -908,50 +979,35 @@ def main(args):
                 if args.enable_model_cpu_offload:
                     pipe.enable_model_cpu_offload()
 
-                if args.tracking_column is None:
-                    validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-                    for validation_prompt in validation_prompts:
-                        pipeline_args = {
-                            "prompt": validation_prompt,
-                            "guidance_scale": args.guidance_scale,
-                            "use_dynamic_cfg": args.use_dynamic_cfg,
-                            "height": args.height,
-                            "width": args.width,
-                            "max_sequence_length": model_config.max_text_seq_length,
-                        }
-                        log_validation(
-                            accelerator=accelerator,
-                            pipe=pipe,
-                            vae=vae,  # 传入vae
-                            args=args,
-                            pipeline_args=pipeline_args,
-                            epoch=epoch,
-                            is_final_validation=False,
-                        )
-                else:
-                    validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-                    # validation_prompts = prompts
-                    for i, validation_prompt in enumerate(validation_prompts):
-                        pipeline_args = {
-                            "prompt": validation_prompt,
-                            "tracking_maps": tracking_maps,
-                            "tracking_map_path": args.tracking_map_path,
-                            "guidance_scale": args.guidance_scale,
-                            "use_dynamic_cfg": args.use_dynamic_cfg,
-                            "height": args.height,
-                            "width": args.width,
-                            "max_sequence_length": model_config.max_text_seq_length,
-                        }
-                        log_validation(
-                            accelerator=accelerator,
-                            pipe=pipe,
-                            vae=vae,
-                            dataset=train_dataset,
-                            args=args,
-                            pipeline_args=pipeline_args,
-                            epoch=epoch,
-                            is_final_validation=False,
-                        )
+                validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
+                validation_images = args.validation_images.split(args.validation_prompt_separator)
+                # validation_prompts = prompts
+                
+                for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+                    pipeline_args = {
+                        "image": load_image(validation_image),
+                        "prompt": validation_prompt,
+                        "guidance_scale": args.guidance_scale,
+                        "use_dynamic_cfg": args.use_dynamic_cfg,
+                        "height": args.height,
+                        "width": args.width,
+                        "max_sequence_length": model_config.max_text_seq_length,
+                    }
+
+                    if args.tracking_column is not None:
+                        pipeline_args["tracking_maps"] = tracking_maps
+                        pipeline_args["tracking_map_path"] = args.tracking_map_path
+
+                    log_validation(
+                        accelerator=accelerator,
+                        pipe=pipe,
+                        vae=vae,
+                        dataset=train_dataset,
+                        args=args,
+                        pipeline_args=pipeline_args,
+                        epoch=epoch,
+                        is_final_validation=False,
+                    )
 
                 transformer.train()
                 accelerator.print("===== Memory after validation =====")
@@ -976,23 +1032,25 @@ def main(args):
         )
         transformer = transformer.to(dtype)
 
+        # Create complete pipeline with trained transformer
         if args.tracking_column is None:
-            pipe = CogVideoXPipeline.from_pretrained(
+            pipe = CogVideoXImageToVideoPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
-                transformer=transformer,
+                transformer=transformer,  # Use trained transformer
                 revision=args.revision,
                 variant=args.variant,
                 torch_dtype=dtype,
             )
         else:
-            pipe = CogVideoXPipelineTracking.from_pretrained(
-                args.pretrained_model_name_or_path, 
-                transformer=transformer,
+            pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
+                args.pretrained_model_name_or_path,
+                transformer=transformer,  # Use trained transformer 
                 revision=args.revision,
                 variant=args.variant,
                 torch_dtype=dtype,
             )
 
+        # Save complete pipeline including all components
         pipe.save_pretrained(
             args.output_dir,
             safe_serialization=True,
@@ -1015,15 +1073,19 @@ def main(args):
 
         # Final test inference
         if args.tracking_column is None:
-            pipe = CogVideoXPipeline.from_pretrained(
+            pipe = CogVideoXImageToVideoPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
+                transformer=unwrap_model(transformer),
+                scheduler=scheduler,
                 revision=args.revision,
                 variant=args.variant,
                 torch_dtype=weight_dtype,
             )
         else:
-            pipe = CogVideoXPipelineTracking.from_pretrained(
+            pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
                 args.pretrained_model_name_or_path,
+                transformer=unwrap_model(transformer),
+                scheduler=scheduler,
                 revision=args.revision,
                 variant=args.variant,
                 torch_dtype=weight_dtype,
@@ -1041,28 +1103,23 @@ def main(args):
         validation_outputs = []
         if args.validation_prompt and args.num_validation_videos > 0:
             validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-            for validation_prompt in validation_prompts:
-                if args.tracking_column is None:
-                    pipeline_args = {
-                        "prompt": validation_prompt,
-                        "guidance_scale": args.guidance_scale,
-                        "use_dynamic_cfg": args.use_dynamic_cfg,
-                        "height": args.height,
-                        "width": args.width,
-                        "max_sequence_length": model_config.max_text_seq_length,
-                    }
-                else:
-                    tracking_maps = tracking_maps.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                    pipeline_args = {
-                        "prompt": validation_prompt,
-                        "tracking_maps": tracking_maps,
-                        "tracking_map_path": args.tracking_map_path,
-                        "guidance_scale": args.guidance_scale,
-                        "use_dynamic_cfg": args.use_dynamic_cfg,
-                        "height": args.height,
-                        "width": args.width,
-                        "max_sequence_length": model_config.max_text_seq_length,
-                    }
+            validation_images = args.validation_images.split(args.validation_prompt_separator)
+            # validation_prompts = prompts
+            
+            for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+                pipeline_args = {
+                    "image": load_image(validation_image),
+                    "prompt": validation_prompt,
+                    "guidance_scale": args.guidance_scale,
+                    "use_dynamic_cfg": args.use_dynamic_cfg,
+                    "height": args.height,
+                    "width": args.width,
+                    "max_sequence_length": model_config.max_text_seq_length,
+                }
+
+                if args.tracking_column is not None:
+                    pipeline_args["tracking_maps"] = tracking_maps
+                    pipeline_args["tracking_map_path"] = args.tracking_map_path
 
                 video = log_validation(
                     accelerator=accelerator,
@@ -1103,6 +1160,5 @@ def main(args):
 if __name__ == "__main__":
     args = get_args()
     main(args)
-
 
 
