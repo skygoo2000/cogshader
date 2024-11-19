@@ -37,7 +37,8 @@ import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
-from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking, CogVideoXPipelineTracking
+from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking, CogVideoXPipelineTracking, CogVideoXVideoToVideoPipelineTracking
+from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking
 
 def generate_video(
     prompt: str,
@@ -74,17 +75,36 @@ def generate_video(
 
     image = None
     video = None
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # transformer = CogVideoXTransformer3DModelTracking.from_pretrained(
+    #     model_path,
+    #     subfolder="transformer",
+    #     torch_dtype=dtype
+    # )
 
     if generate_type == "i2v":
         pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
         image = load_image(image=image_or_video_path)
+        height, width = image.height, image.width
     elif generate_type == "t2v":
         pipe = CogVideoXPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
+    elif generate_type == "i2vo":
+        pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=dtype)
+        image = load_image(image=image_or_video_path)
+        height, width = image.height, image.width
     else:
-        pipe = CogVideoXVideoToVideoPipeline.from_pretrained(model_path, torch_dtype=dtype)
+        pipe = CogVideoXVideoToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
         video = load_video(image_or_video_path)
 
-    height, width = image.height, image.width
+    pipe.transformer.eval()
+    pipe.text_encoder.eval()
+    pipe.vae.eval()
+
+    for param in pipe.transformer.parameters():
+        param.requires_grad = False
+
+    pipe.transformer.gradient_checkpointing = False
 
     # Convert tracking maps from list of PIL Images to tensor
     if tracking_path is not None:
@@ -94,76 +114,100 @@ def generate_video(
             torch.from_numpy(np.array(frame)).permute(2, 0, 1).float() / 255.0 
             for frame in tracking_maps
         ])
-        tracking_maps = tracking_maps.to(dtype=dtype)
+        tracking_maps = tracking_maps.to(device=device, dtype=dtype)
         tracking_first_frame = tracking_maps[0:1]  # Get first frame as [1, C, H, W]
+        height, width = tracking_first_frame.shape[2], tracking_first_frame.shape[3]
     else:
         tracking_maps = None
         tracking_first_frame = None
 
     # 2. Set Scheduler.
-    # Can be changed to `CogVideoXDPMScheduler` or `CogVideoXDDIMScheduler`.
-    # We recommend using `CogVideoXDDIMScheduler` for CogVideoX-2B.
-    # using `CogVideoXDPMScheduler` for CogVideoX-5B / CogVideoX-5B-I2V.
-
-    # pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
 
-    # 3. Enable CPU offload for the model.
-    # turn off if you have multiple GPUs or enough GPU memory(such as H100) and it will cost less time in inference
-    # and enable to("cuda")
-
-    # pipe.to("cuda")
-
-    pipe.enable_sequential_cpu_offload()
+    # 3. 先将所有模型移动到目标设备和数据类型
+    pipe.to(device, dtype=dtype)
+    # pipe.enable_sequential_cpu_offload()
 
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
 
+    # 设置模型为评估模式
+    pipe.transformer.eval()
+    pipe.text_encoder.eval()
+    pipe.vae.eval()
+
+    pipe.transformer.gradient_checkpointing = False
+    
+    if tracking_maps is not None and generate_type != "i2vo":
+        print("encoding tracking maps")
+        tracking_maps = tracking_maps.unsqueeze(0)
+        tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+        with torch.no_grad():
+            tracking_latent_dist = pipe.vae.encode(tracking_maps).latent_dist
+            tracking_maps = tracking_latent_dist.sample() * pipe.vae.config.scaling_factor
+            tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+
     # 4. Generate the video frames based on the prompt.
-    # `num_frames` is the Number of frames to generate.
-    # This is the default value for 6 seconds video and 8 fps and will plus 1 frame for the first frame and 49 frames.
     if generate_type == "i2v":
-        video_generate = pipe(
-            prompt=prompt,
-            image=image,  # The path of the image to be used as the background of the video
-            num_videos_per_prompt=num_videos_per_prompt,  # Number of videos to generate per prompt
-            num_inference_steps=num_inference_steps,  # Number of inference steps
-            num_frames=49,  # Number of frames to generate，changed to 49 for diffusers version `0.30.3` and after.
-            use_dynamic_cfg=True,  # This id used for DPM Sechduler, for DDIM scheduler, it should be False
-            guidance_scale=guidance_scale,
-            generator=torch.Generator().manual_seed(seed),  # Set the seed for reproducibility
-            tracking_maps=tracking_maps,
-            tracking_image=tracking_first_frame,
-            height=height,
-            width=width,
-        ).frames[0]
+        with torch.no_grad():
+            video_generate = pipe(
+                prompt=prompt,
+                image=image,
+                num_videos_per_prompt=num_videos_per_prompt,
+                num_inference_steps=num_inference_steps,
+                num_frames=49,
+                use_dynamic_cfg=True,
+                guidance_scale=guidance_scale,
+                generator=torch.Generator().manual_seed(seed),
+                tracking_maps=tracking_maps,
+                tracking_image=tracking_first_frame,
+                height=height,
+                width=width,
+            ).frames[0]
     elif generate_type == "t2v":
-        video_generate = pipe(
-            prompt=prompt,
-            num_videos_per_prompt=num_videos_per_prompt,
-            num_inference_steps=num_inference_steps,
-            num_frames=49,
-            use_dynamic_cfg=True,
-            guidance_scale=guidance_scale,
-            generator=torch.Generator().manual_seed(seed),
-            tracking_maps=tracking_maps,
-            height=height,
-            width=width,
-        ).frames[0]
+        with torch.no_grad():
+            video_generate = pipe(
+                prompt=prompt,
+                num_videos_per_prompt=num_videos_per_prompt,
+                num_inference_steps=num_inference_steps,
+                num_frames=49,
+                use_dynamic_cfg=True,
+                guidance_scale=guidance_scale,
+                generator=torch.Generator().manual_seed(seed),
+                tracking_maps=tracking_maps,
+                height=height,
+                width=width,
+            ).frames[0]
+    elif generate_type == "i2vo":
+        with torch.no_grad():
+            video_generate = pipe(
+                prompt=prompt,
+                image=image,
+                num_videos_per_prompt=num_videos_per_prompt,
+                num_inference_steps=num_inference_steps,
+                num_frames=49,
+                use_dynamic_cfg=True,
+                guidance_scale=guidance_scale,
+                generator=torch.Generator().manual_seed(seed),
+            ).frames[0]
     else:
-        video_generate = pipe(
-            prompt=prompt,
-            video=video,  # The path of the video to be used as the background of the video
-            num_videos_per_prompt=num_videos_per_prompt,
-            num_inference_steps=num_inference_steps,
-            # num_frames=49,
-            use_dynamic_cfg=True,
-            guidance_scale=guidance_scale,
-            generator=torch.Generator().manual_seed(seed),  # Set the seed for reproducibility
-            height=height,
-            width=width,
-        ).frames[0]
+        with torch.no_grad():
+            video_generate = pipe(
+                prompt=prompt,
+                video=video,  # The path of the video to be used as the background of the video
+                num_videos_per_prompt=num_videos_per_prompt,
+                num_inference_steps=num_inference_steps,
+                num_frames=49,
+                use_dynamic_cfg=True,
+                guidance_scale=guidance_scale,
+                generator=torch.Generator().manual_seed(seed),  # Set the seed for reproducibility
+                height=height,
+                width=width,
+                tracking_maps=tracking_maps,
+            ).frames[0]
     # 5. Export the generated frames to a video file. fps must be 8 for original video.
+    output_path = f"outputs/{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}]_txt[{prompt}].mp4"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     export_to_video(video_generate, output_path, fps=8)
 
 

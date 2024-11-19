@@ -12,7 +12,8 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "CUDA_VISIBLE_DEVICES": "7",
+                "CUDA_VISIBLE_DEVICES": "3",
+                "WANDB_MODE": "offline"
                 // "NCCL_P2P_DISABLE": "1",
                 // "NCCL_IB_DISABLE": "1"
             },
@@ -39,7 +40,7 @@
                 "--max_num_frames", "49",
                 "--train_batch_size", "1",
                 "--max_train_steps", "20000",
-                "--checkpointing_steps", "2000",
+                "--checkpointing_steps", "250",
                 "--gradient_accumulation_steps", "4",
                 "--gradient_checkpointing",
                 "--learning_rate", "1e-4",
@@ -54,7 +55,6 @@
                 "--weight_decay", "0.001",
                 "--max_grad_norm", "1.0",
                 "--allow_tf32",
-                "--report_to", "wandb",
                 "--nccl_timeout", "1800",
             ]
         },
@@ -66,7 +66,8 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "CUDA_VISIBLE_DEVICES": "7"
+                "CUDA_VISIBLE_DEVICES": "3",
+                "WANDB_MODE": "offline"
             },
             "args": [
                 "--pretrained_model_name_or_path", "/home/lipeng/.cache/huggingface/hub/models--THUDM--CogVideoX-5b-I2V/snapshots/c5c783ca1606069b9996dc56f207cc2e681691ed",
@@ -90,7 +91,7 @@
                 "--mixed_precision", "bf16",
                 "--output_dir", "/aifs4su/mmcode/lipeng/cogvideo/ckpts/debug",
                 "--max_num_frames", "49",
-                "--train_batch_size", "1",
+                "--train_batch_size", "2",
                 "--max_train_steps", "20000",
                 "--checkpointing_steps", "2000",
                 "--gradient_accumulation_steps", "4",
@@ -107,7 +108,6 @@
                 "--weight_decay", "0.001",
                 "--max_grad_norm", "1.0",
                 "--allow_tf32",
-                "--report_to", "wandb",
                 "--nccl_timeout", "1800"
             ]
         }
@@ -119,14 +119,14 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "CUDA_VISIBLE_DEVICES": "7"
+                "CUDA_VISIBLE_DEVICES": "3"
             },
             "args": [
-                "--prompt", "A group of people are gathered at an outdoor car show and they are admiring various classic cars. An open blue, grassy field surrounded by trees and residential buildings.",
-                "--model_path", "/aifs4su/mmcode/lipeng/cogvideo/ckpts/img_cogvideox-sft__optimizer_adamw__steps_800__lr-schedule_cosine_with_restarts__learning-rate_1e-4",
+                "--prompt", "The video features a cozy bedroom with a traditional design, showcasing a large bed with a floral comforter in blue, green, and yellow, complemented by green pillows. A white bench at the foot of the bed and a classic table lamp on a nightstand provide a warm glow. The room is adorned with a decorative metal wall piece and a window with sheer curtains, allowing natural light to enhance the inviting atmosphere. At the two-second mark, the scene includes a bathroom with a white vanity, sink, and mirror, alongside a small potted plant, all under the warm yellow walls and table lamp.",
+                "--model_path", "/aifs4su/mmcode/lipeng/cogvideo/ckpts/text_cfg_cogvideox-sft__optimizer_adamw__steps_1000__lr-schedule_cosine_with_restarts__learning-rate_1e-4",
                 "--tracking_path", "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/tracking/000000046_0_tracking.mp4",
-                "--image_or_video_path", "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/000000046_0.png",
-                "--generate_type", "i2v"
+                // "--image_or_video_path", "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/000000046_0.png",
+                "--generate_type", "t2v"
             ]
         }
     ]

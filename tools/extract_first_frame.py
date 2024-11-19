@@ -41,6 +41,6 @@ def process_directory(input_path, output_dir):
 
 if __name__ == "__main__":
 
-    input_path = "/home/lipeng/cogvideox-finetune/datasets/cogmira/videos/000000046_0.mp4"
-    output_directory = "/home/lipeng/cogvideox-finetune/datasets/cogmira"
+    input_path = "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/videos/000000048_0.mp4"
+    output_directory = "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira200"
     process_directory(input_path, output_directory)

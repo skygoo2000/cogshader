@@ -436,7 +436,7 @@ def main(args):
         if accelerator.is_main_process:
             for model in models:
                 if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
-                    model: CogVideoXTransformer3DModel
+                    model: CogVideoXTransformer3DModelTracking
                     model = unwrap_model(model)
                     model.save_pretrained(
                         os.path.join(output_dir, "transformer"), safe_serialization=True, max_shard_size="5GB"
@@ -463,12 +463,12 @@ def main(args):
                     raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
         else:
             with init_empty_weights():
-                transformer_ = CogVideoXTransformer3DModel.from_config(
-                    args.pretrained_model_name_or_path, subfolder="transformer"
+                transformer_ = CogVideoXTransformer3DModelTracking.from_config(
+                    args.pretrained_model_name_or_path, subfolder="transformer", num_tracking_blocks=args.num_tracking_blocks
                 )
                 init_under_meta = True
 
-        load_model = CogVideoXTransformer3DModel.from_pretrained(os.path.join(input_dir, "transformer"))
+        load_model = CogVideoXTransformer3DModelTracking.from_pretrained(os.path.join(input_dir, "transformer"))
         transformer_.register_to_config(**load_model.config)
         transformer_.load_state_dict(load_model.state_dict(), assign=init_under_meta)
         del load_model

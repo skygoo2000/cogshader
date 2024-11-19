@@ -175,3 +175,5 @@ datasets/
 validation/
 ckpts/
 .vscode/
+output.mp4
+outputs/

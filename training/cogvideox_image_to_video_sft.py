@@ -208,6 +208,9 @@ def log_validation(
     # run inference
     generator = torch.Generator(device=accelerator.device).manual_seed(args.seed) if args.seed else None
 
+    if args.num_validation_videos > 2:
+        args.num_validation_videos = 2  # 限制验证视频数量
+
     videos = []
     for _ in range(args.num_validation_videos):
         with torch.no_grad():
@@ -227,6 +230,7 @@ def log_validation(
                     .replace("/", "_")
                 )
                 filename = os.path.join(args.output_dir, f"{phase_name}_video_ep{epoch}_{i}th_{prompt}.mp4")
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
                 export_to_video(video, filename, fps=8)
                 video_filenames.append(filename)
 
@@ -238,7 +242,7 @@ def log_validation(
                     ]
                 }
             )
-
+    torch.cuda.empty_cache()
     return videos
 
 
@@ -469,7 +473,7 @@ def main(args):
         if accelerator.is_main_process:
             for model in models:
                 if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
-                    model: CogVideoXTransformer3DModel
+                    model: CogVideoXTransformer3DModelTracking
                     model = unwrap_model(model)
                     model.save_pretrained(
                         os.path.join(output_dir, "transformer"), safe_serialization=True, max_shard_size="5GB"
@@ -512,8 +516,39 @@ def main(args):
         if args.mixed_precision == "fp16":
             cast_training_params([transformer_])
 
+    def load_model_hook_tracking(models, input_dir):
+        transformer_ = None
+        init_under_meta = False
+
+        # This is a bit of a hack but I don't know any other solution.
+        if not accelerator.distributed_type == DistributedType.DEEPSPEED:
+            while len(models) > 0:
+                model = models.pop()
+
+                if isinstance(unwrap_model(model), type(unwrap_model(transformer))):
+                    transformer_ = unwrap_model(model)
+                else:
+                    raise ValueError(f"Unexpected save model: {unwrap_model(model).__class__}")
+        else:
+            with init_empty_weights():
+                transformer_ = CogVideoXTransformer3DModelTracking.from_config(
+                    args.pretrained_model_name_or_path, subfolder="transformer", num_tracking_blocks=args.num_tracking_blocks
+                )
+                init_under_meta = True
+
+        load_model = CogVideoXTransformer3DModelTracking.from_pretrained(os.path.join(input_dir, "transformer"))
+        transformer_.register_to_config(**load_model.config)
+        transformer_.load_state_dict(load_model.state_dict(), assign=init_under_meta)
+        del load_model
+
+        # Make sure the trainable params are in float32. This is again needed since the base models
+        # are in `weight_dtype`. More details:
+        # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
+        if args.mixed_precision == "fp16":
+            cast_training_params([transformer_])
+
     accelerator.register_save_state_pre_hook(save_model_hook)
-    accelerator.register_load_state_pre_hook(load_model_hook)
+    accelerator.register_load_state_pre_hook(load_model_hook if args.resume_from_checkpoint is None else load_model_hook_tracking)
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -778,14 +813,14 @@ def main(args):
                     latent_dist = DiagonalGaussianDistribution(videos)
                     image_latent_dist = DiagonalGaussianDistribution(images)
 
+                image_latents = image_latent_dist.sample() * VAE_SCALING_FACTOR
+                image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+                image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
+
                 video_latents = latent_dist.sample() * VAE_SCALING_FACTOR
                 video_latents = video_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
                 video_latents = video_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
 
-                image_latents = image_latent_dist.sample() * VAE_SCALING_FACTOR
-                image_latents = image_latents.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
-                image_latents = image_latents.to(memory_format=torch.contiguous_format, dtype=weight_dtype)
-                
                 padding_shape = (video_latents.shape[0], video_latents.shape[1] - 1, *video_latents.shape[2:])
                 latent_padding = image_latents.new_zeros(padding_shape)
                 image_latents = torch.cat([image_latents, latent_padding], dim=1)
@@ -1032,14 +1067,13 @@ def main(args):
         )
         transformer = transformer.to(dtype)
 
-        # Create complete pipeline with trained transformer
         if args.tracking_column is None:
             pipe = CogVideoXImageToVideoPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
                 transformer=transformer,  # Use trained transformer
                 revision=args.revision,
                 variant=args.variant,
-                torch_dtype=dtype,
+                torch_dtype=str(dtype),
             )
         else:
             pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
@@ -1047,10 +1081,9 @@ def main(args):
                 transformer=transformer,  # Use trained transformer 
                 revision=args.revision,
                 variant=args.variant,
-                torch_dtype=dtype,
+                torch_dtype=str(dtype),
             )
 
-        # Save complete pipeline including all components
         pipe.save_pretrained(
             args.output_dir,
             safe_serialization=True,
