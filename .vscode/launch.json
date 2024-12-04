@@ -128,6 +128,25 @@
                 // "--image_or_video_path", "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/000000046_0.png",
                 "--generate_type", "t2v"
             ]
+        },
+        ,{
+            "name": "evaluation_image_to_video",
+            "type": "debugpy",
+            "request": "launch", 
+            "program": "tests/evaluation.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3"
+            },
+            "args": [
+                "--data_root", "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira",
+                "--caption_column", "prompt.txt",
+                "--tracking_column", "trackings.txt",
+                "--video_column", "videos.txt",
+                "--model_path", "/aifs4su/mmcode/lipeng/cogvideo/ckpts/8000_img_cfg_cogvideox-sft__optimizer_adamw__steps_3000__lr-schedule_cosine_with_restarts__learning-rate_1e-4/checkpoint-2800",
+                "--generate_type", "i2v"
+            ]
         }
     ]
 }

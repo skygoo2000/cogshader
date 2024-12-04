@@ -231,7 +231,7 @@ def log_validation(
                 )
                 filename = os.path.join(args.output_dir, f"{phase_name}_video_ep{epoch}_{i}th_{prompt}.mp4")
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
-                export_to_video(video, filename, fps=8)
+                export_to_video(video, filename, fps=24)
                 video_filenames.append(filename)
 
             tracker.log(

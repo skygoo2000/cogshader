@@ -208,7 +208,7 @@ def generate_video(
     # 5. Export the generated frames to a video file. fps must be 8 for original video.
     output_path = f"outputs/{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}]_txt[{prompt}].mp4"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    export_to_video(video_generate, output_path, fps=8)
+    export_to_video(video_generate, output_path, fps=24)
 
 
 if __name__ == "__main__":

@@ -9,15 +9,15 @@ export TORCH_NCCL_ENABLE_MONITORING=0
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DOWNLOAD_TIMEOUT=30
 
-GPU_IDS="0,1,2,3,4,5"
-NUM_PROCESSES=6
+GPU_IDS="4,5"
+NUM_PROCESSES=2
 PORT=29500
 # Training Configurations
 # Experiment with as many hyperparameters as you want!
 LEARNING_RATES=("1e-4")
 LR_SCHEDULES=("cosine_with_restarts")
 OPTIMIZERS=("adamw")
-MAX_TRAIN_STEPS=("3000")
+MAX_TRAIN_STEPS=("1000")
 
 # Single GPU uncompiled training
 ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_2.yaml"
@@ -25,7 +25,8 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_2.yaml"
 # Absolute path to where the data is located. Make sure to have read the README for how to prepare data.
 # This example assumes you downloaded an already prepared dataset from HF CLI as follows:
 # huggingface-cli download --repo-type dataset Wild-Heart/Tom-and-Jerry-VideoGeneration-Dataset --local-dir /path/to/my/datasets/tom-and-jerry-dataset
-DATA_ROOT="/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira200/"
+# /home/lipeng/.cache/huggingface/hub/models--THUDM--CogVideoX-5b-I2V/snapshots/c5c783ca1606069b9996dc56f207cc2e681691ed
+DATA_ROOT="/aifs4su/mmcode/lipeng/cogvideo/datasets/trackingavatars/"
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 TRACKING_COLUMN="trackings.txt"
@@ -36,23 +37,23 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        output_dir="/aifs4su/mmcode/lipeng/cogvideo/ckpts/8000_img_cfg_cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="/aifs4su/mmcode/lipeng/cogvideo/ckpts/100_img_cfg_cogvideox-sft__optimizer_${optimizer}__steps_${steps}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS --num_processes $NUM_PROCESSES --main_process_port $PORT training/cogvideox_image_to_video_sft.py \
-          --pretrained_model_name_or_path /home/lipeng/.cache/huggingface/hub/models--THUDM--CogVideoX-5b-I2V/snapshots/c5c783ca1606069b9996dc56f207cc2e681691ed \
+          --pretrained_model_name_or_path /aifs4su/mmcode/lipeng/cogvideo/ckpts/8000_img_cfg_cogvideox-sft__optimizer_adamw__steps_3000__lr-schedule_cosine_with_restarts__learning-rate_1e-4/checkpoint-1500 \
           --data_root $DATA_ROOT \
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
           --tracking_column $TRACKING_COLUMN \
-          --tracking_map_path /aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira/tracking/000000048_0_tracking.mp4 \
+          --tracking_map_path /aifs4su/mmcode/lipeng/cogvideo/datasets/3d/tracking/dance_tracking.mp4 \
           --num_tracking_blocks 18 \
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \
           --dataloader_num_workers 8 \
           --pin_memory \
-          --validation_prompt \"a girl in a green jacket with hat walking in the snow.\" \
-          --validation_images \"${DATA_ROOT}/snowgirl.png\"
+          --validation_prompt \"a cartoon girl dancing in a empty room.\" \
+          --validation_images \"/aifs4su/mmcode/lipeng/cogvideo/datasets/3d/images/dance.png\"
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
           --validation_epochs 1 \
@@ -62,12 +63,12 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --max_num_frames 49 \
           --train_batch_size $TRAIN_BATCH_SIZE \
           --max_train_steps $steps \
-          --checkpointing_steps 100 \
+          --checkpointing_steps 200 \
           --gradient_accumulation_steps 4 \
           --gradient_checkpointing \
           --learning_rate $learning_rate \
           --lr_scheduler $lr_schedule \
-          --lr_warmup_steps 500 \
+          --lr_warmup_steps 200 \
           --lr_num_cycles 1 \
           --enable_slicing \
           --enable_tiling \
