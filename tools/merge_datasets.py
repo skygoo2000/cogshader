@@ -11,15 +11,19 @@ def merge_datasets(source_dir, target_dir):
     os.makedirs(target_dir, exist_ok=True)
     
     # 复制 tracking 文件夹中的文件
-    source_tracking = os.path.join(source_dir, 'tracking')
-    target_tracking = os.path.join(target_dir, 'tracking')
-    os.makedirs(target_tracking, exist_ok=True)
-    
-    for item in os.listdir(source_tracking):
-        source_item = os.path.join(source_tracking, item)
-        target_item = os.path.join(target_tracking, item)
-        if os.path.isfile(source_item):
-            shutil.copy2(source_item, target_item)
+    try:
+        source_tracking = os.path.join(source_dir, 'tracking')
+        target_tracking = os.path.join(target_dir, 'tracking')
+        os.makedirs(target_tracking, exist_ok=True)
+        
+        for item in os.listdir(source_tracking):
+            source_item = os.path.join(source_tracking, item)
+            target_item = os.path.join(target_tracking, item)
+            if os.path.isfile(source_item):
+                shutil.copy2(source_item, target_item)
+    except:
+        print("tracking 文件夹不存在")
+        pass
             
     # 复制 videos 文件夹中的文件
     source_videos = os.path.join(source_dir, 'videos')
@@ -62,8 +66,8 @@ def merge_datasets(source_dir, target_dir):
 
 if __name__ == "__main__":
     # 设置源数据集和目标数据集的路径
-    source_dataset = "/aifs4su/mmcode/lipeng/cogvideo/datasets/trackingavatars"
-    target_dataset = "/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira200"
+    source_dataset = "/aifs4su/mmcode/lipeng/cogvideo/datasets/physics"
+    target_dataset = "/aifs4su/mmcode/lipeng/cogvideo/datasets/coginv"
     
     # 执行合并操作
     merge_datasets(source_dataset, target_dataset)

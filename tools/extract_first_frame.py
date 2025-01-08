@@ -41,6 +41,6 @@ def process_directory(input_path, output_dir):
 
 if __name__ == "__main__":
 
-    input_path = "/aifs4su/mmcode/lipeng/cogvideo/datasets/3d/videos"
-    output_directory = "/aifs4su/mmcode/lipeng/cogvideo/datasets/3d/firstframe"
+    input_path = "/aifs4su/mmcode/lipeng/cogvideo/eval/blender/videos"
+    output_directory = "/aifs4su/mmcode/lipeng/cogvideo/eval/blender/images"
     process_directory(input_path, output_directory)

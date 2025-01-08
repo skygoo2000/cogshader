@@ -177,3 +177,4 @@ ckpts/
 .vscode/
 output.mp4
 outputs/
+*.code-workspace

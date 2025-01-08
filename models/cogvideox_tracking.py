@@ -564,6 +564,10 @@ class CogVideoXImageToVideoPipelineTracking(CogVideoXImageToVideoPipeline, Diffu
         
         if not isinstance(self.transformer, CogVideoXTransformer3DModelTracking):
             raise ValueError("The transformer in this pipeline must be of type CogVideoXTransformer3DModelTracking")
+            
+        # 打印transformer blocks的数量
+        print(f"Number of transformer blocks: {len(self.transformer.transformer_blocks)}")
+        print(f"Number of tracking transformer blocks: {len(self.transformer.transformer_blocks_copy)}")
 
     @torch.no_grad()
     def __call__(

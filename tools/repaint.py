@@ -90,6 +90,7 @@ def main():
     # 设置路径
     videos_dir = os.path.join(args.dataset_dir, 'videos')
     firstframe_dir = os.path.join(args.dataset_dir, 'firstframe')
+    os.makedirs(firstframe_dir, exist_ok=True)
     
     # 1. 提取视频第一帧
     print("第一步：提取视频第一帧")

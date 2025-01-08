@@ -1022,6 +1022,7 @@ def main(args):
                     pipeline_args = {
                         "image": load_image(validation_image),
                         "prompt": validation_prompt,
+                        "negative_prompt": "The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                         "guidance_scale": args.guidance_scale,
                         "use_dynamic_cfg": args.use_dynamic_cfg,
                         "height": args.height,
@@ -1143,6 +1144,7 @@ def main(args):
                 pipeline_args = {
                     "image": load_image(validation_image),
                     "prompt": validation_prompt,
+                    "negative_prompt": "The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                     "guidance_scale": args.guidance_scale,
                     "use_dynamic_cfg": args.use_dynamic_cfg,
                     "height": args.height,

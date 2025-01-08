@@ -342,6 +342,15 @@ def generate_video(
     fps: int = 8,
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # yr: get all video names first
+    video_names = []
+    video_txt = os.path.join(data_root, video_column)
+    with open(video_txt , "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()  # 去掉首尾空白字符
+            name = line.split('/')[-1].split('.')[0]  # 按 '/' 分割取最后一部分，再按 '.' 分割取第一个
+            video_names.append(name)
 
     # 如果提供了数据集参数，从数据集中采样
     samples = None
@@ -355,7 +364,7 @@ def generate_video(
             num_samples=num_samples,
             random_seed=seed
         )
-
+    
     # 加载模型和数据
     if generate_type == "i2v":
         pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
@@ -386,6 +395,7 @@ def generate_video(
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
 
     # 生成视频
+
     if samples:
         from tqdm import tqdm
         for i, sample in tqdm(enumerate(samples), desc="处理样本"):
@@ -433,10 +443,11 @@ def generate_video(
 
             # 修改输出路径格式
             output_dir = os.path.join(data_root, evaluation_dir)
-            output_name = f"{i:04d}.mp4"
+            # output_name = f"{i:04d}.mp4"
+            output_name = f'{video_names[i]}.mp4'
             output_file = os.path.join(output_dir, output_name)
             os.makedirs(output_dir, exist_ok=True)
-            export_concat_video(video_generate, video, tracking_video, output_file, fps=fps)
+            export_concat_video(video_generate, video, tracking_video, output_file, video_name=video_names[i], fps=fps)
             
     else:
         # 处理单个视频生成
@@ -483,7 +494,7 @@ def generate_video(
         output_name = f"{os.path.splitext(os.path.basename(image_or_video_path))[0]}.mp4"
         output_file = os.path.join(output_dir, output_name)
         os.makedirs(output_dir, exist_ok=True)
-        export_concat_video(video_generate, video, tracking_video, output_file, fps=fps)
+        export_concat_video(video_generate, video, tracking_video, output_file, video_names=None, fps=fps)
 
 def create_frame_grid(frames: List[np.ndarray], interval: int = 9, max_cols: int = 7) -> np.ndarray:
     """
@@ -524,6 +535,7 @@ def export_concat_video(
     original_video: torch.Tensor,
     tracking_maps: torch.Tensor = None,
     output_video_path: str = None,
+    video_name: str = None,
     fps: int = 8
 ) -> str:
     """
@@ -542,7 +554,10 @@ def export_concat_video(
     
     # 获取文件名（不含路径）并创建该视频的专属文件夹
     filename = os.path.basename(output_video_path)
-    name_without_ext = os.path.splitext(filename)[0]
+    if video_name:
+        name_without_ext = video_name
+    else:
+        name_without_ext = os.path.splitext(filename)[0]
     video_frames_dir = os.path.join(base_dir, "frames", name_without_ext)  # frames/video_name/
     
     # 在视频专属文件夹下创建三个子文件夹
@@ -585,7 +600,7 @@ def export_concat_video(
     generated_frames_np = [np.array(frame) for frame in generated_frames]
     
     # 单独保存生成的视频到generated文件夹
-    gen_video_path = os.path.join(generated_dir, f"{name_without_ext}_generated.mp4")
+    gen_video_path = os.path.join(generated_dir, f"{name_without_ext}.mp4")
     with imageio.get_writer(gen_video_path, fps=fps) as writer:
         for frame in generated_frames_np:
             writer.append_data(frame)

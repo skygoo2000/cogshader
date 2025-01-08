@@ -152,6 +152,7 @@ def generate_video(
         with torch.no_grad():
             video_generate = pipe(
                 prompt=prompt,
+                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                 image=image,
                 num_videos_per_prompt=num_videos_per_prompt,
                 num_inference_steps=num_inference_steps,
@@ -168,6 +169,7 @@ def generate_video(
         with torch.no_grad():
             video_generate = pipe(
                 prompt=prompt,
+                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                 num_videos_per_prompt=num_videos_per_prompt,
                 num_inference_steps=num_inference_steps,
                 num_frames=49,
@@ -182,6 +184,7 @@ def generate_video(
         with torch.no_grad():
             video_generate = pipe(
                 prompt=prompt,
+                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                 image=image,
                 num_videos_per_prompt=num_videos_per_prompt,
                 num_inference_steps=num_inference_steps,
@@ -194,6 +197,7 @@ def generate_video(
         with torch.no_grad():
             video_generate = pipe(
                 prompt=prompt,
+                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
                 video=video,  # The path of the video to be used as the background of the video
                 num_videos_per_prompt=num_videos_per_prompt,
                 num_inference_steps=num_inference_steps,

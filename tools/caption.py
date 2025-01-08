@@ -6,10 +6,10 @@ import torch
 from decord import cpu, VideoReader, bridge
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 MODEL_PATH = "THUDM/cogvlm2-llama3-caption"
-DATASET_ROOT = '/aifs4su/mmcode/lipeng/cogvideo/datasets/cogmira200'
+DATASET_ROOT = '/aifs4su/mmcode/lipeng/cogvideo/eval/plane'
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 TORCH_TYPE = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.get_device_capability()[
@@ -100,14 +100,14 @@ def predict(prompt, video_data, temperature):
 
 
 def test():
-    prompt = "Please describe this video in detail."
+    prompt = "Please describe this video in one short entence."
     temperature = 0.1
     video_data = open('test.mp4', 'rb').read()
     response = predict(prompt, video_data, temperature)
     print(response)
 
 def caption_dataset(video_list_file, output_file):
-    prompt = "Please describe this video in detail."
+    prompt = "Please describe this video in one short sentence."
     temperature = 0.1
     
     # 获取视频列表文件的目录路径
@@ -129,12 +129,12 @@ def caption_dataset(video_list_file, output_file):
             try:
                 video_data = open(video_path, 'rb').read()
                 response = predict(prompt, video_data, temperature)
-                f.write(f"{video_path}\t{response}\n")
+                f.write(f"{response}\n")
                 f.flush()  # 确保实时写入
             except Exception as e:
                 print(f"处理视频 {video_path} 时出错: {str(e)}")
 
 if __name__ == '__main__':
     video_list_file = os.path.join(DATASET_ROOT, 'videos.txt')
-    output_file = os.path.join(DATASET_ROOT, 'prompts.txt')
+    output_file = os.path.join(DATASET_ROOT, 'prompt.txt')
     caption_dataset(video_list_file, output_file)
