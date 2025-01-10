@@ -19,9 +19,53 @@ huggingface-cli download \
   --local-dir video-dataset-disney
 ``` -->
 
-## Prepare Dataset and Training
+### Prepare Dataset
 
-Before starting the training, please check whether the dataset has been prepared according to the [dataset specifications](assets/dataset.md). We provide training scripts suitable for image-to-video generation, compatible with the [CogVideoX model family](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be started using the `train*.sh` scripts, depending on the task you want to train.
+Before starting the training, please check whether the dataset has been prepared according to the [dataset specifications](assets/dataset.md). 
+
+In short, your dataset structure should look like this. Running the `tree` command, you should see:
+
+```
+dataset
+├── prompt.txt
+├── videos.txt
+├── trackings.txt
+├── images.txt (or repaint.txt)
+
+├── images (or repaint)
+    ├── images/00000.png
+    ├── images/00001.png
+    ├── ...
+
+├── tracking
+    ├── tracking/00000_tracking.mp4
+    ├── tracking/00001_tracking.mp4
+    ├── ...
+
+├── videos
+    ├── videos/00000.mp4
+    ├── videos/00001.mp4
+    ├── ...
+
+```
+
+### Inference
+
+We provide a script for inference. You can use the `infer.sh` script to generate videos.
+Or run the `inference.py` script directly.
+
+```python
+python tests/inference.py \
+    --prompt <"prompt text"> \ # prompt text
+    --model_path <model_path> \ # checkpoint path
+    --tracking_path <tracking_path> \ # the list of tracking videos path
+    --image_or_video_path <image_or_video_path> \ # the list of images or videos path
+    --generate_type i2v \ 
+```
+
+### Training
+
+We provide training scripts suitable for image-to-video generation, compatible with the [CogVideoX model family](https://huggingface.co/collections/THUDM/cogvideo-66c08e62f1685a3ade464cce). Training can be started using the `train*.sh` scripts, depending on the task you want to train.
 
 - Configure environment variables as per your choice:
 
