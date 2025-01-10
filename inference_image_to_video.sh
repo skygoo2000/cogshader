@@ -1,7 +1,12 @@
 #!/bin/bash
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/miniconda3/envs/cogvideo/lib:$HOME/miniconda3/envs/cogvideo/lib/python3.10/site-packages/nvidia/cuda_nvrtc/lib
-export CUDA_VISIBLE_DEVICES=6
+# CUDA 12.1 Environment Setup
+export CUDA_HOME=/cm/shared/apps/cuda-12.1
+export PATH=$CUDA_HOME/bin${PATH:+:${PATH}}
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}} 
+
+
+export CUDA_VISIBLE_DEVICES=0
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate cogvideo

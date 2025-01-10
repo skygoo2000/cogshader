@@ -1,8 +1,5 @@
 ## Dataset Format
 
-We provide a template dataset for reference.
-You can find it in `assets/dataset`.
-
 ### Prompt Dataset Requirements
 
 Create a `prompt.txt` file, which should contain prompts separated by lines. Please note that the prompts must be in English, and it is recommended to use the [prompt refinement script](https://github.com/THUDM/CogVideo/blob/main/inference/convert_demo.py) for better prompts. Alternatively, you can use [CogVideo-caption](https://huggingface.co/THUDM/cogvlm2-llama3-caption) for data annotation:

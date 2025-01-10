@@ -76,12 +76,10 @@ class VideoDatasetWithResizingTrackingEval(VideoDataset):
             frames_resized = torch.stack([resize(frame, nearest_res) for frame in frames], dim=0)
             frames = torch.stack([self.video_transforms(frame) for frame in frames_resized], dim=0)
 
-            # 读取图像 - 使用PIL而不是decord
             image = Image.open(image_paths)
-            # 转换为RGB模式（如果是其他模式）
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            # 转换为tensor
+
             image = torch.from_numpy(np.array(image)).float()
             image = image.permute(2, 0, 1).contiguous()
             image = resize(image, nearest_res)
@@ -317,19 +315,6 @@ def sample_from_dataset(
             "height": sample["video_metadata"]["height"],
             "width": sample["video_metadata"]["width"]
         })
-    
-    # If dataset parameters are provided, sample from dataset
-    samples = None
-    if all([data_root, caption_column, tracking_column, video_column]):
-        samples = sample_from_dataset(
-            data_root=data_root,
-            caption_column=caption_column,
-            tracking_column=tracking_column,
-            image_paths=image_paths,
-            video_column=video_column,
-            num_samples=num_samples,
-            random_seed=random_seed
-        )
     
     return samples
 
