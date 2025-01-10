@@ -9,9 +9,9 @@ export TORCH_NCCL_ENABLE_MONITORING=0
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DOWNLOAD_TIMEOUT=30
 
-GPU_IDS="0,1,2,3,4,5"
-NUM_PROCESSES=6
-PORT=29503
+GPU_IDS="0,1,2,3,4,5,6,7"
+NUM_PROCESSES=8
+PORT=29500
 # Training Configurations
 # Experiment with as many hyperparameters as you want!
 LEARNING_RATES=("1e-4")
@@ -20,21 +20,25 @@ OPTIMIZERS=("adamw")
 MAX_TRAIN_STEPS=("2000")
 WARMUP_STEPS=100
 CHECKPOINT_STEPS=500
+TRAIN_BATCH_SIZE=2
 
 # Single GPU uncompiled training
 ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_2.yaml"
 
 # Absolute path to where the data is located. Make sure to have read the README for how to prepare data.
-# This example assumes you downloaded an already prepared dataset from HF CLI as follows:
-# huggingface-cli download --repo-type dataset Wild-Heart/Tom-and-Jerry-VideoGeneration-Dataset --local-dir /path/to/my/datasets/tom-and-jerry-dataset
-# /home/lipeng/.cache/huggingface/hub/models--THUDM--CogVideoX-5b-I2V/snapshots/c5c783ca1606069b9996dc56f207cc2e681691ed
-DATA_ROOT="/aifs4su/mmcode/lipeng/cogvideo/datasets/coginv"
-MODEL_PATH="/aifs4su/mmcode/lipeng/cogvideo/ckpts/CogVideoX-5b-I2V"
+
+# training dataset parameters
+DATA_ROOT="../datasets/cogshader"
+MODEL_PATH="../ckpts/CogVideoX-5b-I2V"
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 TRACKING_COLUMN="trackings.txt"
-# TRACKING_MAP_PATH="${DATA_ROOT}/tracking/000000046_0_tracking.mp4"
-TRAIN_BATCH_SIZE=2
+
+# validation parameters
+TRACKING_MAP_PATH="../eval/3d/tracking/dance_tracking.mp4"
+VALIDATION_PROMPT="text"
+VALIDATION_IMAGES="../000000046_0.png"
+
 # Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
@@ -48,15 +52,15 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --caption_column $CAPTION_COLUMN \
           --video_column $VIDEO_COLUMN \
           --tracking_column $TRACKING_COLUMN \
-          --tracking_map_path /aifs4su/mmcode/lipeng/cogvideo/eval/3d/tracking/dance_tracking.mp4 \
+          --tracking_map_path $TRACKING_MAP_PATH \
           --num_tracking_blocks 18 \
           --height_buckets 480 \
           --width_buckets 720 \
           --frame_buckets 49 \
           --dataloader_num_workers 8 \
           --pin_memory \
-          --validation_prompt \"a cartoon girl dancing in a empty room.\" \
-          --validation_images \"/aifs4su/mmcode/lipeng/cogvideo/eval/3d/images/dance.png\"
+          --validation_prompt $VALIDATION_PROMPT \
+          --validation_images $VALIDATION_IMAGES \
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
           --validation_epochs 1 \

@@ -15,10 +15,11 @@ A black and white animated sequence on a ship’s deck features a bulldog charac
 The framework supports resolutions and frame counts that meet the following conditions:
 
 - **Supported Resolutions (Width * Height)**:
-    - Any resolution as long as it is divisible by 32. For example, `720 * 480`, `1920 * 1020`, etc.
+    - We only support `720 * 480`.
 
 - **Supported Frame Counts (Frames)**:
-    - Must be `4 * k` or `4 * k + 1` (example: 16, 32, 49, 81)
+    - For our ckpt, the frame count must be 49.
+    - If you want to train on your own ckpt, the frame count must be `4 * k` or `4 * k + 1` (example: 16, 32, 49, 81)
 
 It is recommended to place all videos in a single folder.
 
@@ -30,7 +31,28 @@ videos/00001.mp4
 ...
 ```
 
-For developers interested in more details, you can refer to the relevant `BucketSampler` code.
+Next, create a `trackings.txt` file. The `trackings.txt` file should contain the tracking file paths, and also separated by lines.
+
+The tracking video should be a 3D tracking video, you need to use our special designed [SpatialTracker](https://github.com/skygoo2000/spatrack) to generate the tracking video.
+
+The paths must be relative to the `--data_root` directory. The format is as follows:
+
+```
+tracking/00000_tracking.mp4
+tracking/00001_tracking.mp4
+...
+```
+
+Next, create a `images.txt` file. The `images.txt` file should contain the image file paths, separated by lines. These images are the images extracted from the video frames. You can use [FLUX.1 Depth](https://huggingface.co/spaces/black-forest-labs/FLUX.1-Depth-dev) to repaint it.
+
+The paths must be relative to the `--data_root` directory. The format is as follows:
+
+```
+images/00000.png
+images/00001.png
+...
+```
+
 
 ### Dataset Structure
 
@@ -40,22 +62,18 @@ Your dataset structure should look like this. Running the `tree` command, you sh
 dataset
 ├── prompt.txt
 ├── videos.txt
+├── trackings.txt
+├── images.txt
+├── images
+    ├── images/00000.png
+    ├── images/00001.png
+    ├── ...
+├── tracking
+    ├── tracking/00000_tracking.mp4
+    ├── tracking/00001_tracking.mp4
+    ├── ...
 ├── videos
     ├── videos/00000.mp4
     ├── videos/00001.mp4
     ├── ...
 ```
-
-### Using the Dataset
-
-When using this format, the `--caption_column` should be set to `prompt.txt`, and the `--video_column` should be set to `videos.txt`. If your data is stored in a CSV file, you can also specify `--dataset_file` as the path to the CSV file, with `--caption_column` and `--video_column` set to the actual column names in the CSV. Please refer to the [test_dataset](../tests/test_dataset.py) file for some simple examples.
-
-For instance, you can fine-tune using [this](https://huggingface.co/datasets/Wild-Heart/Disney-VideoGeneration-Dataset) Disney dataset. The download can be done via the 🤗 Hugging Face CLI:
-
-```
-huggingface-cli download --repo-type dataset Wild-Heart/Disney-VideoGeneration-Dataset --local-dir video-dataset-disney
-```
-
-This dataset has been prepared in the expected format and can be used directly. However, directly using the video dataset may cause Out of Memory (OOM) issues on GPUs with smaller VRAM because it requires loading the [VAE](https://huggingface.co/THUDM/CogVideoX-5b/tree/main/vae) (which encodes videos into latent space) and the large [T5-XXL](https://huggingface.co/google/t5-v1_1-xxl/) text encoder. To reduce memory usage, you can use the `training/prepare_dataset.py` script to precompute latents and embeddings.
-
-Fill or modify the parameters in `prepare_dataset.sh` and execute it to get precomputed latents and embeddings (make sure to specify `--save_latents_and_embeddings` to save the precomputed artifacts). If preparing for image-to-video training, make sure to pass `--save_image_latents`, which encodes and saves image latents along with videos. When using these artifacts during training, ensure that you specify the `--load_tensors` flag, or else the videos will be used directly, requiring the text encoder and VAE to be loaded. The script also supports PyTorch DDP so that large datasets can be encoded in parallel across multiple GPUs (modify the `NUM_GPUS` parameter).
