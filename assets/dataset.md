@@ -1,5 +1,8 @@
 ## Dataset Format
 
+We provide a template dataset for reference.
+You can find it in `assets/dataset`.
+
 ### Prompt Dataset Requirements
 
 Create a `prompt.txt` file, which should contain prompts separated by lines. Please note that the prompts must be in English, and it is recommended to use the [prompt refinement script](https://github.com/THUDM/CogVideo/blob/main/inference/convert_demo.py) for better prompts. Alternatively, you can use [CogVideo-caption](https://huggingface.co/THUDM/cogvlm2-llama3-caption) for data annotation:
@@ -33,7 +36,7 @@ videos/00001.mp4
 
 Next, create a `trackings.txt` file. The `trackings.txt` file should contain the tracking file paths, and also separated by lines.
 
-The tracking video should be a 3D tracking video, you need to use our special designed [SpatialTracker](https://github.com/skygoo2000/spatrack) to generate the tracking video.
+You need to use our special designed [SpatialTracker](https://github.com/skygoo2000/spatrack) to generate the tracking video.
 
 The paths must be relative to the `--data_root` directory. The format is as follows:
 

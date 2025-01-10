@@ -259,9 +259,9 @@ def sample_from_dataset(
     num_samples: int = -1,
     random_seed: int = 42
 ):
-    """从数据集中抽取样本"""
+    """Sample from dataset"""
     if image_paths:
-        # 如果提供了image_paths，使用VideoDatasetWithResizingTrackingEval
+        # If image_paths is provided, use VideoDatasetWithResizingTrackingEval
         dataset = VideoDatasetWithResizingTrackingEval(
             data_root=data_root,
             caption_column=caption_column,
@@ -275,7 +275,7 @@ def sample_from_dataset(
             image_to_video=True
         )
     else:
-        # 如果没有提供image_paths，使用VideoDatasetWithResizingTracking
+        # If image_paths is not provided, use VideoDatasetWithResizingTracking
         dataset = VideoDatasetWithResizingTracking(
             data_root=data_root,
             caption_column=caption_column,
@@ -288,13 +288,13 @@ def sample_from_dataset(
             image_to_video=True
         )
     
-    # 设置随机种子
+    # Set random seed
     random.seed(random_seed)
     
-    # 随机抽取样本
+    # Randomly sample from dataset
     total_samples = len(dataset)
     if num_samples == -1:
-        # 如果num_samples为-1，处理所有样本
+        # If num_samples is -1, process all samples
         selected_indices = range(total_samples)
     else:
         selected_indices = random.sample(range(total_samples), min(num_samples, total_samples))
@@ -302,21 +302,34 @@ def sample_from_dataset(
     samples = []
     for idx in selected_indices:
         sample = dataset[idx]
-        # 根据dataset.__getitem__的返回值获取数据
-        image = sample["image"]  # 已经是处理好的tensor
-        video = sample["video"]  # 已经是处理好的tensor
-        tracking_map = sample["tracking_map"]  # 已经是处理好的tensor
+        # Get data based on dataset.__getitem__ return value
+        image = sample["image"]  # Already processed tensor
+        video = sample["video"]  # Already processed tensor
+        tracking_map = sample["tracking_map"]  # Already processed tensor
         prompt = sample["prompt"]
         
         samples.append({
             "prompt": prompt,
-            "tracking_frame": tracking_map[0],  # 取第一帧
-            "video_frame": image,  # 取第一帧
-            "video": video,  # 完整的video
-            "tracking_maps": tracking_map,  # 完整的tracking maps
+            "tracking_frame": tracking_map[0],  # Get first frame
+            "video_frame": image,  # Get first frame
+            "video": video,  # Complete video
+            "tracking_maps": tracking_map,  # Complete tracking maps
             "height": sample["video_metadata"]["height"],
             "width": sample["video_metadata"]["width"]
         })
+    
+    # If dataset parameters are provided, sample from dataset
+    samples = None
+    if all([data_root, caption_column, tracking_column, video_column]):
+        samples = sample_from_dataset(
+            data_root=data_root,
+            caption_column=caption_column,
+            tracking_column=tracking_column,
+            image_paths=image_paths,
+            video_column=video_column,
+            num_samples=num_samples,
+            random_seed=random_seed
+        )
     
     return samples
 
@@ -343,7 +356,7 @@ def generate_video(
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 如果提供了数据集参数，从数据集中采样
+    # If dataset parameters are provided, sample from dataset
     samples = None
     if all([data_root, caption_column, tracking_column, video_column]):
         samples = sample_from_dataset(
@@ -356,7 +369,7 @@ def generate_video(
             random_seed=seed
         )
 
-    # 加载模型和数据
+    # Load model and data
     if generate_type == "i2v":
         pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
         if not samples:
@@ -375,7 +388,7 @@ def generate_video(
         if not samples:
             video = load_video(image_or_video_path)
 
-    # 设置模型参数
+    # Set model parameters
     pipe.to(device, dtype=dtype)
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
@@ -385,17 +398,17 @@ def generate_video(
     pipe.transformer.gradient_checkpointing = False
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
 
-    # 生成视频
+    # Generate video
     if samples:
         from tqdm import tqdm
-        for i, sample in tqdm(enumerate(samples), desc="处理样本"):
-            print(f"当前prompt: {sample['prompt'][:30]}")
+        for i, sample in tqdm(enumerate(samples), desc="Processing samples"):
+            print(f"Current prompt: {sample['prompt'][:30]}")
             tracking_frame = sample["tracking_frame"].to(device=device, dtype=dtype)
             video_frame = sample["video_frame"].to(device=device, dtype=dtype)
             video = sample["video"].to(device=device, dtype=dtype)
             tracking_maps = sample["tracking_maps"].to(device=device, dtype=dtype)
             
-            # VAE编码tracking maps
+            # VAE
             print("encoding tracking maps")
             tracking_video = tracking_maps
             tracking_maps = tracking_maps.unsqueeze(0)
@@ -406,7 +419,6 @@ def generate_video(
                 tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
 
 
-            # 根据不同生成类型设置参数
             pipeline_args = {
                 "prompt": sample["prompt"],
                 "negative_prompt": "The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
@@ -431,7 +443,6 @@ def generate_video(
             with torch.no_grad():
                 video_generate = pipe(**pipeline_args).frames[0]
 
-            # 修改输出路径格式
             output_dir = os.path.join(data_root, evaluation_dir)
             output_name = f"{i:04d}.mp4"
             output_file = os.path.join(output_dir, output_name)
@@ -439,7 +450,6 @@ def generate_video(
             export_concat_video(video_generate, video, tracking_video, output_file, fps=fps)
             
     else:
-        # 处理单个视频生成
         pipeline_args = {
             "prompt": prompt,
             "num_videos_per_prompt": num_videos_per_prompt,
@@ -478,7 +488,6 @@ def generate_video(
         with torch.no_grad():
             video_generate = pipe(**pipeline_args).frames[0]
 
-        # 单个视频生成的输出路径
         output_dir = os.path.join(data_root, evaluation_dir)
         output_name = f"{os.path.splitext(os.path.basename(image_or_video_path))[0]}.mp4"
         output_file = os.path.join(output_dir, output_name)
@@ -487,31 +496,31 @@ def generate_video(
 
 def create_frame_grid(frames: List[np.ndarray], interval: int = 9, max_cols: int = 7) -> np.ndarray:
     """
-    将视频帧按间隔采样并横向排列成网格图片
+    Arrange video frames into a grid image by sampling at intervals
     
     Args:
-        frames: 视频帧列表
-        interval: 采样间隔
-        max_cols: 每行最多显示的帧数
+        frames: List of video frames
+        interval: Sampling interval
+        max_cols: Maximum number of frames per row
     
     Returns:
-        网格化的图片数组
+        Grid image array
     """
-    # 按间隔采样帧
+    # Sample frames at intervals
     sampled_frames = frames[::interval]
     
-    # 计算行数和列数
+    # Calculate number of rows and columns
     n_frames = len(sampled_frames)
     n_cols = min(max_cols, n_frames)
     n_rows = (n_frames + n_cols - 1) // n_cols
     
-    # 获取单帧的高度和宽度
+    # Get height and width of single frame
     frame_height, frame_width = sampled_frames[0].shape[:2]
     
-    # 创建空白画布
+    # Create blank canvas
     grid = np.zeros((frame_height * n_rows, frame_width * n_cols, 3), dtype=np.uint8)
     
-    # 填充帧
+    # Fill frames
     for idx, frame in enumerate(sampled_frames):
         i = idx // n_cols
         j = idx % n_cols
@@ -527,7 +536,8 @@ def export_concat_video(
     fps: int = 8
 ) -> str:
     """
-    将生成的视频帧、原始视频和tracking maps导出为视频文件，并将采样的帧分别保存到不同文件夹
+    Export generated video frames, original video and tracking maps as video files,
+    and save sampled frames to different folders
     """
     import imageio
     import os
@@ -535,29 +545,29 @@ def export_concat_video(
     if output_video_path is None:
         output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4").name
         
-    # 创建子文件夹
+    # Create subdirectories
     base_dir = os.path.dirname(output_video_path)
-    generated_dir = os.path.join(base_dir, "generated")  # 用于存放生成的视频
-    group_dir = os.path.join(base_dir, "group")  # 用于存放拼接的视频
+    generated_dir = os.path.join(base_dir, "generated")  # For storing generated videos
+    group_dir = os.path.join(base_dir, "group")  # For storing concatenated videos
     
-    # 获取文件名（不含路径）并创建该视频的专属文件夹
+    # Get filename (without path) and create video-specific folder
     filename = os.path.basename(output_video_path)
     name_without_ext = os.path.splitext(filename)[0]
     video_frames_dir = os.path.join(base_dir, "frames", name_without_ext)  # frames/video_name/
     
-    # 在视频专属文件夹下创建三个子文件夹
+    # Create three subdirectories under video-specific folder
     groundtruth_dir = os.path.join(video_frames_dir, "gt")
     generated_frames_dir = os.path.join(video_frames_dir, "generated")
     tracking_dir = os.path.join(video_frames_dir, "tracking")
     
-    # 创建所需的所有目录
+    # Create all required directories
     os.makedirs(generated_dir, exist_ok=True)
     os.makedirs(group_dir, exist_ok=True)
     os.makedirs(groundtruth_dir, exist_ok=True)
     os.makedirs(generated_frames_dir, exist_ok=True)
     os.makedirs(tracking_dir, exist_ok=True)
     
-    # 将原始视频张量转换为numpy数组并调整为正确的格式
+    # Convert original video tensor to numpy array and adjust format
     original_frames = []
     for frame in original_video:
         frame = frame.permute(1,2,0).to(dtype=torch.float32,device="cpu").numpy()
@@ -571,7 +581,7 @@ def export_concat_video(
             frame = ((frame + 1.0) * 127.5).astype(np.uint8)
             tracking_frames.append(frame)
     
-    # 确保所有视频的帧数相同
+    # Ensure all videos have same number of frames
     num_frames = min(len(generated_frames), len(original_frames))
     if tracking_maps is not None:
         num_frames = min(num_frames, len(tracking_frames))
@@ -581,26 +591,26 @@ def export_concat_video(
     if tracking_maps is not None:
         tracking_frames = tracking_frames[:num_frames]
     
-    # 将生成的PIL图像转换为numpy数组
+    # Convert generated PIL images to numpy arrays
     generated_frames_np = [np.array(frame) for frame in generated_frames]
     
-    # 单独保存生成的视频到generated文件夹
+    # Save generated video separately to generated folder
     gen_video_path = os.path.join(generated_dir, f"{name_without_ext}_generated.mp4")
     with imageio.get_writer(gen_video_path, fps=fps) as writer:
         for frame in generated_frames_np:
             writer.append_data(frame)
     
-    # 上下拼接每一帧并保存采样帧
+    # Concatenate frames vertically and save sampled frames
     concat_frames = []
     for i in range(num_frames):
         gen_frame = generated_frames_np[i]
         orig_frame = original_frames[i]
         
-        # 确保所有帧的宽度相同
+        # Ensure all frames have same width
         width = min(gen_frame.shape[1], orig_frame.shape[1])
-        height = orig_frame.shape[0]  # 使用原始视频的高度作为标准
+        height = orig_frame.shape[0]  # Use height of original video as standard
         
-        # 调整所有帧的大小
+        # Resize all frames
         gen_frame = Image.fromarray(gen_frame).resize((width, height))
         gen_frame = np.array(gen_frame)
         orig_frame = Image.fromarray(orig_frame).resize((width, height))
@@ -610,30 +620,30 @@ def export_concat_video(
             track_frame = tracking_frames[i]
             track_frame = Image.fromarray(track_frame).resize((width, height))
             track_frame = np.array(track_frame)
-            # 三个视频垂直拼接
+            # Three videos vertically concatenated
             concat_frame = np.concatenate([gen_frame, orig_frame, track_frame], axis=0)
         else:
-            # 视频垂直拼接
+            # Video vertically concatenated
             concat_frame = np.concatenate([gen_frame, orig_frame], axis=0)
         
         concat_frames.append(concat_frame)
         
-        # 每9帧保存一次各类型的帧
+        # Save every 9 frames of each type of frame
         if i % 9 == 0:
-            # 保存生成的帧
+            # Save generated frame
             gen_frame_path = os.path.join(generated_frames_dir, f"{i:04d}.png")
             Image.fromarray(gen_frame).save(gen_frame_path)
             
-            # 保存原始帧
+            # Save original frame
             gt_frame_path = os.path.join(groundtruth_dir, f"{i:04d}.png")
             Image.fromarray(orig_frame).save(gt_frame_path)
             
-            # 如果有tracking maps，保存tracking帧
+            # If tracking maps, save tracking frame
             if tracking_maps is not None:
                 track_frame_path = os.path.join(tracking_dir, f"{i:04d}.png")
                 Image.fromarray(track_frame).save(track_frame_path)
     
-    # 导出拼接后的视频到group文件夹
+    # Export concatenated video to group folder
     group_video_path = os.path.join(group_dir, filename)
     with imageio.get_writer(group_video_path, fps=fps) as writer:
         for frame in concat_frames:
@@ -670,31 +680,31 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="The seed for reproducibility")
     parser.add_argument("--tracking_path", type=str, default=None, help="The path of the tracking maps to be used")
     
-    # 数据集相关参数设为必需
+    # Dataset related parameters are required
     parser.add_argument("--data_root", type=str, required=True, help="Root directory of the dataset")
     parser.add_argument("--caption_column", type=str, required=True, help="Name of the caption column")
     parser.add_argument("--tracking_column", type=str, required=True, help="Name of the tracking column")
     parser.add_argument("--video_column", type=str, required=True, help="Name of the video column")
     parser.add_argument("--image_paths", type=str, required=False, help="Name of the image column")
     
-    # 添加num_samples参数
+    # Add num_samples parameter
     parser.add_argument("--num_samples", type=int, default=-1, 
                        help="Number of samples to process. -1 means process all samples")
     
-    # 添加evaluation_dir参数
+    # Add evaluation_dir parameter
     parser.add_argument("--evaluation_dir", type=str, default="evaluations", 
                        help="Name of the directory to store evaluation results")
     
-    # 添加fps参数
+    # Add fps parameter
     parser.add_argument("--fps", type=int, default=8, 
                        help="Frames per second for the output video")
 
     args = parser.parse_args()
     dtype = torch.float16 if args.dtype == "float16" else torch.bfloat16
     
-    # 如果没有提供prompt，generate_video函数会使用数据集中的prompt
+    # If prompt is not provided, generate_video function will use prompts from dataset
     generate_video(
-        prompt=args.prompt,  # 可以为None
+        prompt=args.prompt,  # Can be None
         model_path=args.model_path,
         tracking_path=args.tracking_path,
         image_paths=args.image_paths,

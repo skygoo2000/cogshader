@@ -124,14 +124,11 @@ def generate_video(
     # 2. Set Scheduler.
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
 
-    # 3. 先将所有模型移动到目标设备和数据类型
     pipe.to(device, dtype=dtype)
     # pipe.enable_sequential_cpu_offload()
 
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
-
-    # 设置模型为评估模式
     pipe.transformer.eval()
     pipe.text_encoder.eval()
     pipe.vae.eval()
