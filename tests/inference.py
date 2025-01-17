@@ -1,22 +1,3 @@
-"""
-This script demonstrates how to generate a video using the CogVideoX model with the Hugging Face `diffusers` pipeline.
-The script supports different types of video generation, including text-to-video (t2v), image-to-video (i2v),
-and video-to-video (v2v), depending on the input data and different weight.
-
-- text-to-video: THUDM/CogVideoX-5b or THUDM/CogVideoX-2b
-- video-to-video: THUDM/CogVideoX-5b or THUDM/CogVideoX-2b
-- image-to-video: THUDM/CogVideoX-5b-I2V
-
-Running the Script:
-To run the script, use the following command with appropriate arguments:
-
-```bash
-$ python cli_demo.py --prompt "A girl riding a bike." --model_path THUDM/CogVideoX-5b --generate_type "t2v"
-```
-
-Additional options are available to specify the model path, guidance scale, number of inference steps, video generation type, and output paths.
-"""
-
 import argparse
 from typing import Literal
 import os
@@ -24,11 +5,8 @@ import sys
 
 import torch
 from diffusers import (
-    CogVideoXPipeline,
-    CogVideoXDDIMScheduler,
     CogVideoXDPMScheduler,
     CogVideoXImageToVideoPipeline,
-    CogVideoXVideoToVideoPipeline,
 )
 
 from diffusers.utils import export_to_video, load_image, load_video
@@ -50,7 +28,7 @@ def generate_video(
     guidance_scale: float = 6.0,
     num_videos_per_prompt: int = 1,
     dtype: torch.dtype = torch.bfloat16,
-    generate_type: str = Literal["t2v", "i2v", "v2v"],  # i2v: image to video, v2v: video to video
+    generate_type: str = Literal["t2v", "i2v"],  # i2v: image to video, i2vo: original CogVideoX-5b-I2V
     seed: int = 42,
 ):
     """
@@ -87,15 +65,10 @@ def generate_video(
         pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
         image = load_image(image=image_or_video_path)
         height, width = image.height, image.width
-    elif generate_type == "t2v":
-        pipe = CogVideoXPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
-    elif generate_type == "i2vo":
+    else:
         pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=dtype)
         image = load_image(image=image_or_video_path)
         height, width = image.height, image.width
-    else:
-        pipe = CogVideoXVideoToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
-        video = load_video(image_or_video_path)
 
     pipe.transformer.eval()
     pipe.text_encoder.eval()
@@ -135,7 +108,7 @@ def generate_video(
 
     pipe.transformer.gradient_checkpointing = False
     
-    if tracking_maps is not None and generate_type != "i2vo":
+    if tracking_maps is not None and generate_type == "i2v":
         print("encoding tracking maps")
         tracking_maps = tracking_maps.unsqueeze(0)
         tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
@@ -143,6 +116,9 @@ def generate_video(
             tracking_latent_dist = pipe.vae.encode(tracking_maps).latent_dist
             tracking_maps = tracking_latent_dist.sample() * pipe.vae.config.scaling_factor
             tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+    else:
+        tracking_maps = None
+        tracking_first_frame = None
 
     # 4. Generate the video frames based on the prompt.
     if generate_type == "i2v":
@@ -162,22 +138,7 @@ def generate_video(
                 height=height,
                 width=width,
             ).frames[0]
-    elif generate_type == "t2v":
-        with torch.no_grad():
-            video_generate = pipe(
-                prompt=prompt,
-                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
-                num_videos_per_prompt=num_videos_per_prompt,
-                num_inference_steps=num_inference_steps,
-                num_frames=49,
-                use_dynamic_cfg=True,
-                guidance_scale=guidance_scale,
-                generator=torch.Generator().manual_seed(seed),
-                tracking_maps=tracking_maps,
-                height=height,
-                width=width,
-            ).frames[0]
-    elif generate_type == "i2vo":
+    else:
         with torch.no_grad():
             video_generate = pipe(
                 prompt=prompt,
@@ -189,22 +150,6 @@ def generate_video(
                 use_dynamic_cfg=True,
                 guidance_scale=guidance_scale,
                 generator=torch.Generator().manual_seed(seed),
-            ).frames[0]
-    else:
-        with torch.no_grad():
-            video_generate = pipe(
-                prompt=prompt,
-                negative_prompt="The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
-                video=video,  # The path of the video to be used as the background of the video
-                num_videos_per_prompt=num_videos_per_prompt,
-                num_inference_steps=num_inference_steps,
-                num_frames=49,
-                use_dynamic_cfg=True,
-                guidance_scale=guidance_scale,
-                generator=torch.Generator().manual_seed(seed),  # Set the seed for reproducibility
-                height=height,
-                width=width,
-                tracking_maps=tracking_maps,
             ).frames[0]
     # 5. Export the generated frames to a video file. fps must be 8 for original video.
     output_path = f"outputs/{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}]_txt[{prompt}].mp4"

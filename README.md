@@ -8,7 +8,31 @@
 
 ## Quickstart
 
-Clone the repository and make sure the requirements are installed: `pip install -r requirements.txt` and install diffusers from source by `pip install git+https://github.com/huggingface/diffusers`.
+### Create environment
+1. Clone the repository and create conda environment: 
+
+```
+git clone git@github.com:IGL-HKUST/DiffusionAsShader.git
+conda create -n das python=3.10
+conda activate das
+```
+
+2. Install pytorch, we recommend `Pytorch 2.5.1` with `CUDA 11.8`:
+
+```
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+```
+
+
+3. Install `image_gen_aux`:
+```
+pip install git+https://github.com/asomoza/image_gen_aux.git
+```
+
+4. Make sure the requirements are installed:
+```
+pip install -r requirements.txt
+```
 
 <!-- Then download a dataset:
 

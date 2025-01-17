@@ -59,8 +59,8 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           --frame_buckets 49 \
           --dataloader_num_workers 8 \
           --pin_memory \
-          --validation_prompt $VALIDATION_PROMPT \
-          --validation_images $VALIDATION_IMAGES \
+          --validation_prompt \"$VALIDATION_PROMPT\" \
+          --validation_images \"$VALIDATION_IMAGES\" \
           --validation_prompt_separator ::: \
           --num_validation_videos 1 \
           --validation_epochs 1 \

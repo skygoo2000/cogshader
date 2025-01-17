@@ -177,3 +177,22 @@ ckpts/
 output.mp4
 outputs/
 *.code-workspace
+
+**/*/.DS_Store
+**/*/__pycache__/*
+.DS_Store
+__pycache__
+vis_results
+checkpoints
+**/*/.pth
+**/*/.pt
+**/*/.mp4
+**/*/.npy
+
+/assets/**
+./vis_results/** */
+models/monoD/zoeDepth/ckpts/*
+slurm-*.out
+.vscode
+
+data/

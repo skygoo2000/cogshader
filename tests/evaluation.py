@@ -1,22 +1,3 @@
-"""
-This script demonstrates how to generate a video using the CogVideoX model with the Hugging Face `diffusers` pipeline.
-The script supports different types of video generation, including text-to-video (t2v), image-to-video (i2v),
-and video-to-video (v2v), depending on the input data and different weight.
-
-- text-to-video: THUDM/CogVideoX-5b or THUDM/CogVideoX-2b
-- video-to-video: THUDM/CogVideoX-5b or THUDM/CogVideoX-2b
-- image-to-video: THUDM/CogVideoX-5b-I2V
-
-Running the Script:
-To run the script, use the following command with appropriate arguments:
-
-```bash
-$ python cli_demo.py --prompt "A girl riding a bike." --model_path THUDM/CogVideoX-5b --generate_type "t2v"
-```
-
-Additional options are available to specify the model path, guidance scale, number of inference steps, video generation type, and output paths.
-"""
-
 import argparse
 from typing import Any, Dict, List, Literal, Tuple
 import pandas as pd
@@ -328,7 +309,7 @@ def generate_video(
     guidance_scale: float = 6.0,
     num_videos_per_prompt: int = 1,
     dtype: torch.dtype = torch.bfloat16,
-    generate_type: str = Literal["i2v", "i2vo", "v2v"],
+    generate_type: str = Literal["i2v", "i2vo"],  # i2v: image to video, i2vo: original CogVideoX-5b-I2V
     seed: int = 42,
     data_root: str = None,
     caption_column: str = None,
@@ -360,18 +341,11 @@ def generate_video(
         if not samples:
             image = load_image(image=image_or_video_path)
             height, width = image.height, image.width
-    elif generate_type == "i2vo":
+    else:
         pipe = CogVideoXImageToVideoPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=dtype)
         if not samples:
             image = load_image(image=image_or_video_path)
             height, width = image.height, image.width
-    else:  # v2v
-        if tracking_column:
-            pipe = CogVideoXVideoToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
-        else:
-            pipe = CogVideoXVideoToVideoPipeline.from_pretrained(model_path, torch_dtype=dtype)
-        if not samples:
-            video = load_video(image_or_video_path)
 
     # Set model parameters
     pipe.to(device, dtype=dtype)
@@ -416,12 +390,9 @@ def generate_video(
                 "width": sample["width"]
             }
 
-            if generate_type == "i2v" or generate_type == "i2vo":
-                pipeline_args["image"] = (video_frame + 1.0) / 2.0
-            else:  # v2v
-                pipeline_args["video"] = video_frame
-
-            if tracking_column and generate_type != "i2vo":
+            pipeline_args["image"] = (video_frame + 1.0) / 2.0
+            
+            if tracking_column and generate_type == "i2v":
                 pipeline_args["tracking_maps"] = tracking_maps
                 pipeline_args["tracking_image"] = (tracking_frame.unsqueeze(0) + 1.0) / 2.0
 
@@ -446,13 +417,11 @@ def generate_video(
         }
 
         pipeline_args["video"] = video
+        pipeline_args["image"] = image
+        pipeline_args["height"] = height
+        pipeline_args["width"] = width
 
-        if generate_type == "i2v" or generate_type == "i2vo":
-            pipeline_args["image"] = image
-            pipeline_args["height"] = height
-            pipeline_args["width"] = width
-
-        if tracking_path and generate_type != "i2vo":
+        if tracking_path and generate_type == "i2v":
             tracking_maps = load_video(tracking_path)
             tracking_maps = torch.stack([
                 torch.from_numpy(np.array(frame)).permute(2, 0, 1).float() / 255.0 
