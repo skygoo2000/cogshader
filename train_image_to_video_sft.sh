@@ -30,21 +30,22 @@ ACCELERATE_CONFIG_FILE="accelerate_configs/uncompiled_2.yaml"
 # training dataset parameters
 DATA_ROOT="../datasets/cogshader"
 MODEL_PATH="../ckpts/CogVideoX-5b-I2V"
+OUTPUT_PATH="../ckpts/your_ckpt_path"
 CAPTION_COLUMN="prompt.txt"
 VIDEO_COLUMN="videos.txt"
 TRACKING_COLUMN="trackings.txt"
 
 # validation parameters
-TRACKING_MAP_PATH="../eval/3d/tracking/dance_tracking.mp4"
+TRACKING_MAP_PATH="../videos/tracking.mp4"
 VALIDATION_PROMPT="text"
-VALIDATION_IMAGES="../000000046_0.png"
+VALIDATION_IMAGES="../videos/first_frame.png"
 
 # Launch experiments with different hyperparameters
 for learning_rate in "${LEARNING_RATES[@]}"; do
   for lr_schedule in "${LR_SCHEDULES[@]}"; do
     for optimizer in "${OPTIMIZERS[@]}"; do
       for steps in "${MAX_TRAIN_STEPS[@]}"; do
-        output_dir="/aifs4su/mmcode/lipeng/cogvideo/ckpts/cogshader_inv-avatar-physics_steps_${steps}__optimizer_${optimizer}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
+        output_dir="${OUTPUT_PATH}/cogshader_inv-avatar-physics_steps_${steps}__optimizer_${optimizer}__lr-schedule_${lr_schedule}__learning-rate_${learning_rate}/"
 
         cmd="accelerate launch --config_file $ACCELERATE_CONFIG_FILE --gpu_ids $GPU_IDS --num_processes $NUM_PROCESSES --main_process_port $PORT training/cogvideox_image_to_video_sft.py \
           --pretrained_model_name_or_path $MODEL_PATH \

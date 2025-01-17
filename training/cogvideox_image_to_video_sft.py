@@ -725,6 +725,9 @@ def main(args):
     accelerator.print(f"  Gradient accumulation steps = {args.gradient_accumulation_steps}")
     accelerator.print(f"  Total optimization steps = {args.max_train_steps}")
     
+    # Get model config before validation for deepspeed
+    model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
+    
     # Add initial validation before training starts
     if accelerator.is_main_process and args.validation_prompt is not None:
         accelerator.print("===== Memory before initial validation =====")
@@ -837,7 +840,7 @@ def main(args):
     )
 
     # For DeepSpeed training
-    model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
+    # model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
 
     if args.load_tensors:
         del vae, text_encoder
@@ -1056,7 +1059,7 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if (args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0) or (args.validation_prompt is not None and epoch == 0):
+            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)

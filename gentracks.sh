@@ -6,9 +6,9 @@ export PATH=$CUDA_HOME/bin${PATH:+:${PATH}}
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}} 
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate spatrack
+conda activate das
 
-cd /your_path/spatrack
+cd /your_path
 
 export DATASET_PATH=../your_dataset_path
 
