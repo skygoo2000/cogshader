@@ -164,7 +164,7 @@ def log_validation(
     )
 
     tracking_map_path = pipeline_args.pop("tracking_map_path", None)
-    
+
     try:
         tracking_maps = pipeline_args.pop("tracking_maps", None)
     except:
@@ -818,7 +818,6 @@ def main(args):
             }
 
             if args.tracking_column is not None:
-                pipeline_args["tracking_maps"] = tracking_maps
                 pipeline_args["tracking_map_path"] = args.tracking_map_path
 
             log_validation(
