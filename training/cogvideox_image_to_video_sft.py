@@ -164,7 +164,11 @@ def log_validation(
     )
 
     tracking_map_path = pipeline_args.pop("tracking_map_path", None)
-    tracking_maps = pipeline_args.pop("tracking_maps", None)
+    
+    try:
+        tracking_maps = pipeline_args.pop("tracking_maps", None)
+    except:
+        tracking_maps = None
     
     if tracking_map_path and args.load_tensors is False:
         from torchvision.transforms.functional import resize
@@ -765,6 +769,79 @@ def main(args):
     # For DeepSpeed training
     model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
 
+    # Add initial validation before training starts
+    if accelerator.is_main_process:
+        accelerator.print("===== Memory before initial validation =====")
+        print_memory(accelerator.device)
+        torch.cuda.synchronize(accelerator.device)
+        transformer.eval()
+
+        if args.tracking_column is None:
+            pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                transformer=unwrap_model(transformer),
+                scheduler=scheduler,
+                revision=args.revision,
+                variant=args.variant,
+                torch_dtype=weight_dtype,
+            )
+        else:
+            pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
+                args.pretrained_model_name_or_path,
+                transformer=unwrap_model(transformer),
+                scheduler=scheduler,
+                revision=args.revision,
+                variant=args.variant,
+                torch_dtype=weight_dtype,
+            )
+
+        if args.enable_slicing:
+            pipe.vae.enable_slicing()
+        if args.enable_tiling:
+            pipe.vae.enable_tiling()
+        if args.enable_model_cpu_offload:
+            pipe.enable_model_cpu_offload()
+
+        validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
+        validation_images = args.validation_images.split(args.validation_prompt_separator)
+        
+        for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+            pipeline_args = {
+                "image": load_image(validation_image),
+                "prompt": validation_prompt,
+                "negative_prompt": "The video is not of a high quality, it has a low resolution. Watermark present in each frame. The background is solid. Strange body and strange trajectory. Distortion.",
+                "guidance_scale": args.guidance_scale,
+                "use_dynamic_cfg": args.use_dynamic_cfg,
+                "height": args.height,
+                "width": args.width,
+                "max_sequence_length": model_config.max_text_seq_length,
+            }
+
+            if args.tracking_column is not None:
+                pipeline_args["tracking_maps"] = tracking_maps
+                pipeline_args["tracking_map_path"] = args.tracking_map_path
+
+            log_validation(
+                accelerator=accelerator,
+                pipe=pipe,
+                vae=vae,
+                dataset=train_dataset,
+                args=args,
+                pipeline_args=pipeline_args,
+                epoch=0,
+                is_final_validation=False,
+            )
+
+        transformer.train()
+        accelerator.print("===== Memory after initial validation =====")
+        print_memory(accelerator.device)
+        reset_memory(accelerator.device)
+
+        del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize(accelerator.device)
+
     if args.load_tensors:
         del vae, text_encoder
         gc.collect()
@@ -982,7 +1059,7 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if (args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0) or (args.validation_prompt is not None and epoch == 0):
+            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
                 accelerator.print("===== Memory before validation =====")
                 print_memory(accelerator.device)
                 torch.cuda.synchronize(accelerator.device)
@@ -1031,7 +1108,6 @@ def main(args):
                     }
 
                     if args.tracking_column is not None:
-                        pipeline_args["tracking_maps"] = tracking_maps
                         pipeline_args["tracking_map_path"] = args.tracking_map_path
 
                     log_validation(
@@ -1138,7 +1214,6 @@ def main(args):
         if args.validation_prompt and args.num_validation_videos > 0:
             validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
             validation_images = args.validation_images.split(args.validation_prompt_separator)
-            # validation_prompts = prompts
             
             for validation_image, validation_prompt in zip(validation_images, validation_prompts):
                 pipeline_args = {
@@ -1153,7 +1228,6 @@ def main(args):
                 }
 
                 if args.tracking_column is not None:
-                    pipeline_args["tracking_maps"] = tracking_maps
                     pipeline_args["tracking_map_path"] = args.tracking_map_path
 
                 video = log_validation(
