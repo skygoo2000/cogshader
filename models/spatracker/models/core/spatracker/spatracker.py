@@ -24,7 +24,6 @@ from models.spatracker.models.core.spatracker.blocks import (
     edgeMat,
     VitEncoder,
     DPTEnc,
-    DPT_DINOv2,
     Dinov2
 )
 

@@ -24,15 +24,19 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu11
 ```
 
 
-3. Install `image_gen_aux`:
+<!-- 3. Install `MoGe`:
 ```
 pip install git+https://github.com/asomoza/image_gen_aux.git
-```
+``` -->
 
-4. Make sure the requirements are installed:
+3. Make sure the requirements are installed:
 ```
 pip install -r requirements.txt
 ```
+
+4. Manually download the SpatialTracker checkpoint to `checkpoints/`, from [Google Drive](https://drive.google.com/drive/folders/1UtzUJLPhJdUg2XvemXXz1oe6KUQKVjsZ). 
+
+<!-- 5. Manually download the ZoeDepth checkpoints (dpt_beit_large_384.pt, ZoeD_M12_K.pt, ZoeD_M12_NK.pt) to `models/monoD/zoeDepth/ckpts/`. For more information, refer to [this issue](https://github.com/henry123-boy/SpaTracker/issues/20). -->
 
 <!-- Then download a dataset:
 

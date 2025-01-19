@@ -3,7 +3,6 @@
 #-------- import the base packages -------------
 import sys
 import os
-from easydict import EasyDict as edict
 
 import torch
 import torch.nn.functional as F
@@ -22,7 +21,8 @@ from models.spatracker.predictor import SpaTrackerPredictor
 from models.spatracker.utils.visualizer import Visualizer, read_video_from_path
 
 #-------- import Depth Estimator -------------
-from mde import MonoDEst
+from PIL import Image
+from image_gen_aux import DepthPreprocessor
 
 # set the arguments
 parser = argparse.ArgumentParser()
@@ -132,26 +132,25 @@ def process_video(args, model, MonoDEst_M, vid_name, root_dir, outdir):
 
     video = video.to(device)
 
-    if args.rgbd:
-        DEPTH_DIR = os.path.join(root_dir, vid_name_without_ext)
-        assert os.path.exists(DEPTH_DIR), f"Provide depth maps in {DEPTH_DIR}"
-        depths = []
-        for dir_i in sorted(os.listdir(DEPTH_DIR)):
-            depth = np.load(os.path.join(DEPTH_DIR, dir_i))
-            depths.append(depth)
-        depths = np.stack(depths, axis=0)
-        depths = torch.from_numpy(depths).float().to(device)[:,None]
+    if not args.rgbd:
+        video_depths = []
+        for i in range(video.shape[1]):
+            frame = (video[0, i].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            depth = depth_preprocessor(Image.fromarray(frame))[0]
+            depth_tensor = transforms.ToTensor()(depth)  # [1, H, W]
+            video_depths.append(depth_tensor)
+        depths = torch.stack(video_depths, dim=0).cuda()  # [T, 1, H, W]
+        print("Depth maps shape:", depths.shape)
     else:
         depths = None
 
     # Use accelerator.unwrap_model() to get original model
     unwrapped_model = accelerator.unwrap_model(model)
-    unwrapped_MonoDEst_M = accelerator.unwrap_model(MonoDEst_M) if MonoDEst_M is not None else None
 
     pred_tracks, pred_visibility, T_Firsts = (
         unwrapped_model(video, video_depth=depths,
               grid_size=args.grid_size, backward_tracking=args.backward,
-              depth_predictor=unwrapped_MonoDEst_M, grid_query_frame=args.query_frame,
+              depth_predictor=None, grid_query_frame=args.query_frame,
               segm_mask=torch.from_numpy(segm_mask)[None, None].to(device), wind_length=12,
               progressive_tracking=False)  # Enable progressive tracking
     )
@@ -189,17 +188,14 @@ if __name__ == "__main__":
         seq_length=S_lenth
     )
     
-    cfg = edict({"mde_name": "zoedepth_nk"})
-    
     if not args.rgbd:
-        MonoDEst_O = MonoDEst(cfg)
-        MonoDEst_M = MonoDEst_O.model
-        MonoDEst_M.eval()
+        depth_preprocessor = DepthPreprocessor.from_pretrained("Intel/zoedepth-nyu-kitti")
+        depth_preprocessor.to(device)
     else:
-        MonoDEst_M = None
+        depth_preprocessor = None
 
     # Use Accelerator to wrap models
-    model, MonoDEst_M = accelerator.prepare(model, MonoDEst_M)
+    model, depth_preprocessor = accelerator.prepare(model, depth_preprocessor)
 
     # Get all video files
     video_files = [f for f in os.listdir(args.root) if f.endswith('.mp4')]
@@ -214,7 +210,7 @@ if __name__ == "__main__":
     # Each process only handles its assigned videos
     for vid_name in video_files[start_idx:end_idx]:
         accelerator.print(f"Process {process_id} starts processing {vid_name}")
-        process_video(args, model, MonoDEst_M, vid_name, args.root, args.outdir)
+        process_video(args, model, depth_preprocessor, vid_name, args.root, args.outdir)
 
     accelerator.wait_for_everyone()
     if accelerator.is_local_main_process:

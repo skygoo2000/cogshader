@@ -51,17 +51,9 @@ class SpaTrackerPredictor(torch.nn.Module):
         backward_tracking: bool = False,
         depth_predictor=None,
         wind_length: int = 8,
-        progressive_tracking: bool = False,  # 新增参数
+        progressive_tracking: bool = False,
     ):
-        if progressive_tracking:
-            tracks, visibilities, T_Firsts = self._compute_progressive_tracks(
-                video,
-                grid_size=grid_size,
-                depth_predictor=depth_predictor,
-                video_depth=video_depth,
-                wind_length=wind_length,
-            )
-        elif queries is None and grid_size == 0:
+        if queries is None and grid_size == 0:
             tracks, visibilities, T_Firsts = self._compute_dense_tracks(
                 video,
                 grid_query_frame=grid_query_frame,
@@ -160,10 +152,6 @@ class SpaTrackerPredictor(torch.nn.Module):
                 grid_pts_extra = grid_pts[:, point_mask]
             else:
                 grid_pts_extra = None
-            # queries = torch.cat(
-            #     [torch.ones_like(grid_pts[:, :, :1]) * grid_query_frame, grid_pts],
-            #     dim=2,
-            # )
             if grid_pts_extra is not None:
                 total_num = int(grid_pts_extra.shape[1])
                 total_num = min(800, total_num)
@@ -177,20 +165,10 @@ class SpaTrackerPredictor(torch.nn.Module):
                     dim=2,
                 )
 
-            ## only track gird_pts
-
-            # queries = torch.cat(
-            #     [torch.randint_like(grid_pts[:, :, :1], T), grid_pts],
-            #     dim=2,
-            # )
-            # queries = torch.cat([queries, queries_extra], dim=1)
-            
             queries = torch.cat(
                 [torch.zeros_like(grid_pts[:, :, :1]), grid_pts],
                 dim=2,
             )
-
-            # import ipdb; ipdb.set_trace()
 
         if add_support_grid:
             grid_pts = get_points_on_a_grid(self.support_grid_size, self.interp_shape, device=video.device)
@@ -220,6 +198,22 @@ class SpaTrackerPredictor(torch.nn.Module):
                     video_depth = depth_predictor.infer(video[0]/255)
         video_depth = F.interpolate(video_depth,
                                      tuple(self.interp_shape), mode="nearest")
+        
+        # from PIL import Image
+        # import numpy
+        # depth_frame = video_depth[0].detach().cpu()
+        # depth_frame = depth_frame.squeeze(0)
+        # print(depth_frame)
+        # print(depth_frame.min(), depth_frame.max())
+        # depth_img = (depth_frame * 255).numpy().astype(numpy.uint8)
+        # depth_img = Image.fromarray(depth_img, mode='L')
+        # depth_img.save('outputs/depth_map.png')
+
+        # frame = video[0, 0].detach().cpu()
+        # frame = frame.permute(1, 2, 0)
+        # frame = (frame * 255).numpy().astype(numpy.uint8)
+        # frame = Image.fromarray(frame, mode='RGB')
+        # frame.save('outputs/frame.png')
 
         depths = video_depth
         rgbds = torch.cat([video, depths[None,...]], dim=2)
@@ -288,79 +282,3 @@ class SpaTrackerPredictor(torch.nn.Module):
         tracks[mask] = inv_tracks[mask]
         visibilities[mask[:, :, :, 0]] = inv_visibilities[mask[:, :, :, 0]]
         return tracks, visibilities
-
-    def _compute_progressive_tracks(
-        self,
-        video,
-        grid_size=30,
-        depth_predictor=None,
-        video_depth=None,
-        wind_length=8
-    ):
-        B, T, C, H, W = video.shape
-        assert B == 1
-        
-        # 初始化结果
-        all_tracks = []
-        all_visibilities = []
-        all_T_Firsts = []
-        
-        # 对每一帧进行处理
-        for t in tqdm(range(T), desc="处理帧"):
-            # 为当前帧生成网格点
-            grid_pts = get_points_on_a_grid(grid_size, self.interp_shape, device=video.device)
-            queries = torch.cat(
-                [torch.ones_like(grid_pts[:, :, :1]) * t, grid_pts],
-                dim=2
-            )
-            
-            # 准备当前帧到最后一帧的视频片段
-            video_slice = video[:, t:]
-            video_slice = video_slice.reshape(B * (T-t), C, H, W)
-            video_slice = F.interpolate(video_slice, tuple(self.interp_shape), mode="bilinear")
-            video_slice = video_slice.reshape(B, T-t, C, self.interp_shape[0], self.interp_shape[1])
-            
-            # 处理深度信息
-            if video_depth is None and depth_predictor is not None:
-                with torch.no_grad():
-                    depth_slice = depth_predictor.infer(video_slice[0]/255)
-            elif video_depth is not None:
-                depth_slice = video_depth[t:]
-            else:
-                depth_slice = None
-            
-            if depth_slice is not None:
-                depth_slice = F.interpolate(depth_slice, tuple(self.interp_shape), mode="nearest")
-                rgbds = torch.cat([video_slice, depth_slice[None,...]], dim=2)
-            else:
-                rgbds = video_slice
-            
-            # 获取3D查询点
-            if depth_slice is not None:
-                depth_interp = bilinear_sample2d(depth_slice[0], queries[:, :, 1], queries[:, :, 2])
-                queries = smart_cat(queries, depth_interp, dim=-1)
-            
-            # 模型推理
-            tracks, __, visibilities = self.model(rgbds=rgbds, queries=queries, iters=6, wind_S=wind_length)
-            
-            # 调整轨迹的时间维度
-            full_tracks = torch.zeros((B, T, tracks.shape[2], 2), device=tracks.device)
-            full_tracks[:, t:] = tracks
-            full_visibilities = torch.zeros((B, T, visibilities.shape[2]), device=visibilities.device, dtype=torch.bool)
-            full_visibilities[:, t:] = visibilities
-            T_Firsts = torch.full((B, tracks.shape[2]), t, device=tracks.device, dtype=torch.uint8)
-            
-            # 将像素坐标转换回原始视频尺寸
-            full_tracks[:, :, :, 0] *= W / float(self.interp_shape[1])
-            full_tracks[:, :, :, 1] *= H / float(self.interp_shape[0])
-            
-            all_tracks.append(full_tracks)
-            all_visibilities.append(full_visibilities)
-            all_T_Firsts.append(T_Firsts)
-        
-        # 合并所有轨迹
-        final_tracks = torch.cat(all_tracks, dim=2)
-        final_visibilities = torch.cat(all_visibilities, dim=2)
-        final_T_Firsts = torch.cat(all_T_Firsts, dim=1)
-        
-        return final_tracks, final_visibilities, final_T_Firsts

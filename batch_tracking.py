@@ -2,7 +2,6 @@
 
 #-------- import the base packages -------------
 import os
-from easydict import EasyDict as edict
 
 import torch
 import torch.nn.functional as F
@@ -12,13 +11,14 @@ import argparse
 import torchvision.transforms as transforms
 from tqdm import tqdm
 import torch.cuda
+from PIL import Image
 
 #-------- import spatialtracker -------------
 from models.spatracker.predictor import SpaTrackerPredictor
 from models.spatracker.utils.visualizer import Visualizer, read_video_from_path
 
 #-------- import Depth Estimator -------------
-from mde import MonoDEst
+from image_gen_aux import DepthPreprocessor
 
 # set the arguments
 parser = argparse.ArgumentParser()
@@ -78,14 +78,11 @@ if __name__ == "__main__":
     )
     model = model.cuda()
     
-    cfg = edict({"mde_name": "zoedepth_nk"})
-    
     if not args.rgbd:
-        MonoDEst_O = MonoDEst(cfg)
-        MonoDEst_M = MonoDEst_O.model
-        MonoDEst_M.eval()
+        depth_preprocessor = DepthPreprocessor.from_pretrained("Intel/zoedepth-nyu-kitti")
+        depth_preprocessor.to("cuda")
     else:
-        MonoDEst_M = None
+        depth_preprocessor = None
 
     # Get all video files
     video_files = [f for f in os.listdir(root_dir) if f.endswith('.mp4')]
@@ -148,23 +145,25 @@ if __name__ == "__main__":
 
         # import ipdb; ipdb.set_trace()
         
-        if args.rgbd:
-            DEPTH_DIR = os.path.join(root_dir, vid_name_without_ext)
-            assert os.path.exists(DEPTH_DIR), f"Provide depth maps in {DEPTH_DIR}"
-            depths = []
-            for dir_i in tqdm(sorted(os.listdir(DEPTH_DIR)), desc="Loading depth maps", leave=False):
-                depth = np.load(os.path.join(DEPTH_DIR, dir_i))
-                depths.append(depth)
-            depths = np.stack(depths, axis=0)
-            depths = torch.from_numpy(depths).float().cuda()[:,None]
+        if not args.rgbd:
+            video_depths = []
+            for i in range(video.shape[1]):
+                frame = (video[0, i].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                depth = depth_preprocessor(Image.fromarray(frame))[0]
+                depth_tensor = transforms.ToTensor()(depth)  # [1, H, W]
+                video_depths.append(depth_tensor)
+            depths = torch.stack(video_depths, dim=0).cuda()  # [T, 1, H, W]
+            print("Depth maps shape:", depths.shape)
         else:
             depths = None
 
         pred_tracks, pred_visibility, T_Firsts = (
             model(video, video_depth=depths,
                     grid_size=grid_size, backward_tracking=args.backward,
-                    depth_predictor=MonoDEst_M, grid_query_frame=args.query_frame,
-                    segm_mask=torch.from_numpy(segm_mask)[None, None], wind_length=S_lenth,
+                    depth_predictor=None,
+                    grid_query_frame=args.query_frame,
+                    segm_mask=torch.from_numpy(segm_mask)[None, None].cuda(),
+                    wind_length=S_lenth,
                     progressive_tracking=False)
         )
         

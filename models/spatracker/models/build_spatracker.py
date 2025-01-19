@@ -41,7 +41,7 @@ def _build_spatracker(
     )
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
-            state_dict = torch.load(f, map_location="cpu")
+            state_dict = torch.load(f, map_location="cpu", weights_only=True)
             if "model" in state_dict:
                 model_paras = spatracker.state_dict()
                 paras_dict = {k: v for k,v in state_dict["model"].items() if k in spatracker.state_dict()}

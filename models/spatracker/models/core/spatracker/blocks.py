@@ -17,7 +17,7 @@ import torchvision.models as tvm
 from models.spatracker.models.core.spatracker.vit.encoder import ImageEncoderViT as vitEnc
 from models.spatracker.models.core.spatracker.dpt.models import DPTEncoder
 from models.spatracker.models.core.spatracker.loftr import LocalFeatureTransformer
-from models.monoD.depth_anything.dpt import DPTHeadEnc, DPTHead
+# from models.monoD.depth_anything.dpt import DPTHeadEnc, DPTHead
 
 # From PyTorch internals
 def _ntuple(n):
@@ -363,47 +363,47 @@ class DPTEnc(nn.Module):
                             mode='bilinear', align_corners=False)
         return x
 
-class DPT_DINOv2(nn.Module):
-    def __init__(self, encoder='vits', features=64, out_channels=[48, 96, 192, 384],
-                  use_bn=True, use_clstoken=False, localhub=True, stride=2, enc_only=True):
-        super(DPT_DINOv2, self).__init__()
-        self.stride = stride
-        self.enc_only = enc_only
-        assert encoder in ['vits', 'vitb', 'vitl']
+# class DPT_DINOv2(nn.Module):
+#     def __init__(self, encoder='vits', features=64, out_channels=[48, 96, 192, 384],
+#                   use_bn=True, use_clstoken=False, localhub=True, stride=2, enc_only=True):
+#         super(DPT_DINOv2, self).__init__()
+#         self.stride = stride
+#         self.enc_only = enc_only
+#         assert encoder in ['vits', 'vitb', 'vitl']
         
-        if localhub:
-            self.pretrained = torch.hub.load('models/torchhub/facebookresearch_dinov2_main', 'dinov2_{:}14'.format(encoder), source='local', pretrained=False)
-        else:
-            self.pretrained = torch.hub.load('facebookresearch/dinov2', 'dinov2_{:}14'.format(encoder))
+#         if localhub:
+#             self.pretrained = torch.hub.load('models/torchhub/facebookresearch_dinov2_main', 'dinov2_{:}14'.format(encoder), source='local', pretrained=False)
+#         else:
+#             self.pretrained = torch.hub.load('facebookresearch/dinov2', 'dinov2_{:}14'.format(encoder))
         
-        state_dict = torch.load("models/monoD/zoeDepth/ckpts/dinov2_vits14_pretrain.pth")
-        self.pretrained.load_state_dict(state_dict, strict=True)
-        self.pretrained.requires_grad_(False)
-        dim = self.pretrained.blocks[0].attn.qkv.in_features
-        if enc_only == True:
-            out_channels=[128, 128, 128, 128]
+#         state_dict = torch.load("models/monoD/zoeDepth/ckpts/dinov2_vits14_pretrain.pth")
+#         self.pretrained.load_state_dict(state_dict, strict=True)
+#         self.pretrained.requires_grad_(False)
+#         dim = self.pretrained.blocks[0].attn.qkv.in_features
+#         if enc_only == True:
+#             out_channels=[128, 128, 128, 128]
         
-        self.DPThead = DPTHeadEnc(1, dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken)
+#         self.DPThead = DPTHeadEnc(1, dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken)
 
         
-    def forward(self, x):
-        mean_ = torch.tensor([0.485, 0.456, 0.406], 
-                             device=x.device).view(1, 3, 1, 1)
-        std_ = torch.tensor([0.229, 0.224, 0.225],
-                            device=x.device).view(1, 3, 1, 1)
-        x = (x+1)/2
-        x = (x - mean_)/std_
-        h, w = x.shape[-2:]
-        h_re, w_re = 560, 560
-        x_resize = F.interpolate(x, size=(h_re, w_re),
-                                  mode='bilinear', align_corners=False)
-        with torch.no_grad():
-            features = self.pretrained.get_intermediate_layers(x_resize, 4, return_class_token=True)
-        patch_h, patch_w = h_re // 14, w_re // 14
-        feat = self.DPThead(features, patch_h, patch_w, self.enc_only)
-        feat = F.interpolate(feat, size=(h//self.stride, w//self.stride), mode="bilinear", align_corners=True)
+#     def forward(self, x):
+#         mean_ = torch.tensor([0.485, 0.456, 0.406], 
+#                              device=x.device).view(1, 3, 1, 1)
+#         std_ = torch.tensor([0.229, 0.224, 0.225],
+#                             device=x.device).view(1, 3, 1, 1)
+#         x = (x+1)/2
+#         x = (x - mean_)/std_
+#         h, w = x.shape[-2:]
+#         h_re, w_re = 560, 560
+#         x_resize = F.interpolate(x, size=(h_re, w_re),
+#                                   mode='bilinear', align_corners=False)
+#         with torch.no_grad():
+#             features = self.pretrained.get_intermediate_layers(x_resize, 4, return_class_token=True)
+#         patch_h, patch_w = h_re // 14, w_re // 14
+#         feat = self.DPThead(features, patch_h, patch_w, self.enc_only)
+#         feat = F.interpolate(feat, size=(h//self.stride, w//self.stride), mode="bilinear", align_corners=True)
 
-        return feat
+#         return feat
 
 
 class VGG19(nn.Module):
