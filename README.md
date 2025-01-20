@@ -29,8 +29,9 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu11
 pip install git+https://github.com/asomoza/image_gen_aux.git
 ``` -->
 
-3. Make sure the requirements are installed:
+3. Make sure the submodule and requirements are installed:
 ```
+git submodule update --init --recursive
 pip install -r requirements.txt
 ```
 

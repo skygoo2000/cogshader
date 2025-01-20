@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# CUDA 12.1 Environment Setup
-export CUDA_HOME=/cm/shared/apps/cuda-12.1
-export PATH=$CUDA_HOME/bin${PATH:+:${PATH}}
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}} 
+# CUDA 11.8 Environment Setup
+# YOU MUST SET THE CUDA_HOME AND PATH AND LD_LIBRARY_PATH
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate das
