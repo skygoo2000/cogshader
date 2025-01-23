@@ -233,7 +233,7 @@ def log_validation(
                     .replace('"', "_")
                     .replace("/", "_")
                 )
-                filename = os.path.join(args.output_dir, f"{phase_name}_video_ep{epoch}_{i}th_{prompt}.mp4")
+                filename = os.path.join(args.output_dir, f"{phase_name}_ep{epoch}_{i}th_{prompt}.mp4")
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
                 export_to_video(video, filename, fps=24)
                 video_filenames.append(filename)
@@ -1116,7 +1116,7 @@ def main(args):
                         dataset=train_dataset,
                         args=args,
                         pipeline_args=pipeline_args,
-                        epoch=epoch,
+                        epoch=(epoch + 1),
                         is_final_validation=False,
                     )
 
@@ -1236,7 +1236,7 @@ def main(args):
                     dataset=train_dataset,
                     args=args,
                     pipeline_args=pipeline_args,
-                    epoch=epoch,
+                    epoch=(epoch + 1),
                     is_final_validation=True,
                 )
                 validation_outputs.extend(video)

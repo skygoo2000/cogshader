@@ -176,6 +176,7 @@ ckpts/
 .vscode/
 output.mp4
 outputs/
+camctrl_output
 *.code-workspace
 
 **/*/.DS_Store

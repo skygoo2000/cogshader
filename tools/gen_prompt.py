@@ -67,3 +67,8 @@ def gen_prompt_for_rgb(rgb):
     prompt = prompt[split:]
     print(f'prompt: {prompt}')
     return prompt
+
+def gen_prompt_for_path(path):
+    rgb = read_video_from_path(path)
+    prompt = gen_prompt_for_rgb(rgb)
+    return prompt

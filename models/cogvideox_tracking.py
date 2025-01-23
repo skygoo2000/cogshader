@@ -284,56 +284,64 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel, ModelMixi
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
-        # 首先尝试直接加载 tracking 模型
         try:
             model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
-            print("Loaded CogVideoXTransformer3DModelTracking checkpoint directly.")
+            print("Loaded DiffusionAsShader checkpoint directly.")
+            
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            for linear in model.combine_linears:
+                for param in linear.parameters():
+                    param.requires_grad = True
+                
+            for block in model.transformer_blocks_copy:
+                for param in block.parameters():
+                    param.requires_grad = True
+                
+            for param in model.initial_combine_linear.parameters():
+                param.requires_grad = True
+            
             return model
+        
         except Exception as e:
-            print(f"Failed to load as CogVideoXTransformer3DModelTracking: {e}")
+            print(f"Failed to load as DiffusionAsShader: {e}")
             print("Attempting to load as CogVideoXTransformer3DModel and convert...")
 
-        # 加载基础模型
-        base_model = CogVideoXTransformer3DModel.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        
-        # 准备新模型的参数
-        config = dict(base_model.config)
-        config["num_tracking_blocks"] = kwargs.pop("num_tracking_blocks", 18)
-        
-        # 创建新模型实例
-        model = cls(**config)
-        
-        # 加载基础模型的权重
-        model.load_state_dict(base_model.state_dict(), strict=False)
-        
-        # 初始化新增的层
-        model.initial_combine_linear.weight.data.zero_()
-        model.initial_combine_linear.bias.data.zero_()
-        
-        for linear in model.combine_linears:
-            linear.weight.data.zero_()
-            linear.bias.data.zero_()
-        
-        # 复制 transformer blocks
-        for i in range(model.num_tracking_blocks):
-            model.transformer_blocks_copy[i].load_state_dict(model.transformer_blocks[i].state_dict())
-        
-        # 设置参数的训练状态
-        for param in model.parameters():
-            param.requires_grad = False
+            base_model = CogVideoXTransformer3DModel.from_pretrained(pretrained_model_name_or_path, **kwargs)
             
-        for linear in model.combine_linears:
-            for param in linear.parameters():
-                param.requires_grad = True
-                
-        for block in model.transformer_blocks_copy:
-            for param in block.parameters():
-                param.requires_grad = True
-                
-        for param in model.initial_combine_linear.parameters():
-            param.requires_grad = True
+            config = dict(base_model.config)
+            config["num_tracking_blocks"] = kwargs.pop("num_tracking_blocks", 18)
             
-        return model
+            model = cls(**config)
+            model.load_state_dict(base_model.state_dict(), strict=False)
+
+            model.initial_combine_linear.weight.data.zero_()
+            model.initial_combine_linear.bias.data.zero_()
+            
+            for linear in model.combine_linears:
+                linear.weight.data.zero_()
+                linear.bias.data.zero_()
+            
+            for i in range(model.num_tracking_blocks):
+                model.transformer_blocks_copy[i].load_state_dict(model.transformer_blocks[i].state_dict())
+            
+
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            for linear in model.combine_linears:
+                for param in linear.parameters():
+                    param.requires_grad = True
+                
+            for block in model.transformer_blocks_copy:
+                for param in block.parameters():
+                    param.requires_grad = True
+                
+            for param in model.initial_combine_linear.parameters():
+                param.requires_grad = True
+            
+            return model
 
     def save_pretrained(
         self,

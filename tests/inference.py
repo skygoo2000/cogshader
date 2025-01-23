@@ -22,6 +22,7 @@ def generate_video(
     prompt: str,
     model_path: str,
     tracking_path: str = None,
+    tracking_video: torch.Tensor = None,
     output_path: str = "./output.mp4",
     image_or_video_path: str = "",
     num_inference_steps: int = 50,
@@ -29,6 +30,7 @@ def generate_video(
     num_videos_per_prompt: int = 1,
     dtype: torch.dtype = torch.bfloat16,
     generate_type: str = Literal["t2v", "i2v"],  # i2v: image to video, i2vo: original CogVideoX-5b-I2V
+    fps: int = 24,
     seed: int = 42,
 ):
     """
@@ -90,6 +92,11 @@ def generate_video(
         tracking_maps = tracking_maps.to(device=device, dtype=dtype)
         tracking_first_frame = tracking_maps[0:1]  # Get first frame as [1, C, H, W]
         height, width = tracking_first_frame.shape[2], tracking_first_frame.shape[3]
+    elif tracking_video is not None:
+        tracking_maps = tracking_video.float() / 255.0 # [T, C, H, W]
+        tracking_maps = tracking_maps.to(device=device, dtype=dtype)
+        tracking_first_frame = tracking_maps[0:1]  # Get first frame as [1, C, H, W]
+        height, width = tracking_first_frame.shape[2], tracking_first_frame.shape[3]
     else:
         tracking_maps = None
         tracking_first_frame = None
@@ -109,9 +116,9 @@ def generate_video(
     pipe.transformer.gradient_checkpointing = False
     
     if tracking_maps is not None and generate_type == "i2v":
-        print("encoding tracking maps")
-        tracking_maps = tracking_maps.unsqueeze(0)
-        tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+        print("Encoding tracking maps")
+        tracking_maps = tracking_maps.unsqueeze(0) # [B, T, C, H, W]
+        tracking_maps = tracking_maps.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
         with torch.no_grad():
             tracking_latent_dist = pipe.vae.encode(tracking_maps).latent_dist
             tracking_maps = tracking_latent_dist.sample() * pipe.vae.config.scaling_factor
@@ -154,7 +161,7 @@ def generate_video(
     # 5. Export the generated frames to a video file. fps must be 8 for original video.
     output_path = output_path if output_path else f"{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}]_txt[{prompt}].mp4"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    export_to_video(video_generate, output_path, fps=24)
+    export_to_video(video_generate, output_path, fps=fps)
 
 
 if __name__ == "__main__":
