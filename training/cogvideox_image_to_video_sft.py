@@ -1149,7 +1149,7 @@ def main(args):
                 transformer=transformer,  # Use trained transformer
                 revision=args.revision,
                 variant=args.variant,
-                torch_dtype=str(dtype),
+                torch_dtype=dtype,
             )
         else:
             pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
@@ -1157,7 +1157,7 @@ def main(args):
                 transformer=transformer,  # Use trained transformer 
                 revision=args.revision,
                 variant=args.variant,
-                torch_dtype=str(dtype),
+                torch_dtype=dtype,
             )
 
         pipe.save_pretrained(
@@ -1168,9 +1168,9 @@ def main(args):
 
         # Cleanup trained models to save memory
         if args.load_tensors:
-            del transformer, pipe
+            del pipe
         else:
-            del transformer, text_encoder, vae, pipe
+            del text_encoder, vae, pipe
 
         gc.collect()
         torch.cuda.empty_cache()

@@ -9,7 +9,7 @@ conda activate das
 
 echo "start time: $(date)"
 
-python tests/evaluation.py \
+python testing/evaluation.py \
     --data_root <data_root> \
     --model_path <model_path> \
     --evaluation_dir <evaluation_dir> \

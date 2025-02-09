@@ -9,7 +9,7 @@ export CUDA_VISIBLE_DEVICES=0
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate cogvideo
 
-python tests/inference.py \
+python testing/inference.py \
     --prompt <"prompt text"> \
     --model_path <model_path> \
     --tracking_path <tracking_path> \

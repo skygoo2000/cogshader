@@ -19,7 +19,7 @@ The framework supports resolutions and frame counts that meet the following cond
 
 - **Supported Frame Counts (Frames)**:
     - For our ckpt, the frame count must be 49.
-    - If you want to train on your own ckpt, the frame count must be `4 * k` or `4 * k + 1` (example: 16, 32, 49, 81)
+    - If you want to train on your own ckpt, the frame count must be `` or `4 * k + 1` (example: 16, 32, 49, 81)
 
 It is recommended to place all videos in a single folder.
 
@@ -33,9 +33,18 @@ videos/00001.mp4
 
 Next, create a `trackings.txt` file. The `trackings.txt` file should contain the tracking file paths, and also separated by lines.
 
-You need to use our special designed [SpatialTracker](https://github.com/skygoo2000/spatrack) to generate the tracking video.
 
-The paths must be relative to the `--data_root` directory. The format is as follows:
+#### You need to use `accelerate_tracking.py` or `batch_tracking.py` to generate the tracking video as follows. Our bash script `scripts/generate_TrackingVideo.sh` is also provided to generate the tracking video. Please provide your dataset path to the script.
+
+```bash
+# for multiple GPUs
+accelerate launch accelerate_tracking.py --data_root <videos_root> --output_dir <output_dir>
+# for single GPU
+python batch_tracking.py --data_root <videos_root> --output_dir <output_dir>
+```
+
+
+The paths in `trackings.txt` must be relative to the `--data_root` directory. The format is as follows:
 
 ```
 tracking/00000_tracking.mp4
@@ -77,3 +86,5 @@ dataset
     ├── videos/00001.mp4
     ├── ...
 ```
+
+

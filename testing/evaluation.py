@@ -360,8 +360,8 @@ def generate_video(
     # Generate video
     if samples:
         from tqdm import tqdm
-        for i, sample in tqdm(enumerate(samples), desc="Processing samples"):
-            print(f"Current prompt: {sample['prompt'][:30]}")
+        for i, sample in tqdm(enumerate(samples), desc="Samples Num:"):
+            print(f"Prompt: {sample['prompt'][:30]}")
             tracking_frame = sample["tracking_frame"].to(device=device, dtype=dtype)
             video_frame = sample["video_frame"].to(device=device, dtype=dtype)
             video = sample["video"].to(device=device, dtype=dtype)
@@ -560,11 +560,9 @@ def export_concat_video(
         gen_frame = generated_frames_np[i]
         orig_frame = original_frames[i]
         
-        # Ensure all frames have same width
         width = min(gen_frame.shape[1], orig_frame.shape[1])
-        height = orig_frame.shape[0]  # Use height of original video as standard
+        height = orig_frame.shape[0]
         
-        # Resize all frames
         gen_frame = Image.fromarray(gen_frame).resize((width, height))
         gen_frame = np.array(gen_frame)
         orig_frame = Image.fromarray(orig_frame).resize((width, height))
@@ -574,11 +572,24 @@ def export_concat_video(
             track_frame = tracking_frames[i]
             track_frame = Image.fromarray(track_frame).resize((width, height))
             track_frame = np.array(track_frame)
-            # Three videos vertically concatenated
-            concat_frame = np.concatenate([gen_frame, orig_frame, track_frame], axis=0)
+            
+            right_concat = np.concatenate([orig_frame, track_frame], axis=0)
+            
+            right_concat_pil = Image.fromarray(right_concat)
+            new_height = right_concat.shape[0] // 2
+            new_width = right_concat.shape[1] // 2
+            right_concat_resized = right_concat_pil.resize((new_width, new_height))
+            right_concat_resized = np.array(right_concat_resized)
+            
+            concat_frame = np.concatenate([gen_frame, right_concat_resized], axis=1)
         else:
-            # Video vertically concatenated
-            concat_frame = np.concatenate([gen_frame, orig_frame], axis=0)
+            orig_frame_pil = Image.fromarray(orig_frame)
+            new_height = orig_frame.shape[0] // 2
+            new_width = orig_frame.shape[1] // 2
+            orig_frame_resized = orig_frame_pil.resize((new_width, new_height))
+            orig_frame_resized = np.array(orig_frame_resized)
+            
+            concat_frame = np.concatenate([gen_frame, orig_frame_resized], axis=1)
         
         concat_frames.append(concat_frame)
         

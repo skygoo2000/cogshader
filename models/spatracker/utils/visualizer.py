@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from moviepy.editor import ImageSequenceClip
 import matplotlib.pyplot as plt
-
+from tqdm import tqdm
 
 def read_video_from_path(path):
     cap = cv2.VideoCapture(path)
@@ -290,7 +290,7 @@ class Visualizer:
             color_map = {lable.item(): color for lable, color in zip(cls_label, colors)}
 
         # Draw points
-        for t in range(T):
+        for t in tqdm(range(T)):
             # Create a list to store information for each point
             points_info = []
             for i in range(N):

@@ -28,7 +28,7 @@ parser.add_argument('--root', type=str, default='./assets', help='path to the vi
 parser.add_argument('--gpu', type=int, default=0, help='gpu id')
 # set the downsample factor
 parser.add_argument('--downsample', type=float, default=0.8, help='downsample factor')
-parser.add_argument('--grid_size', type=int, default=50, help='grid size')
+parser.add_argument('--grid_size', type=int, default=70, help='grid size')
 # set the results outdir
 parser.add_argument('--outdir', type=str, default='./vis_results', help='output directory')
 # set the fps

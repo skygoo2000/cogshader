@@ -576,6 +576,7 @@ class CogVideoXImageToVideoPipelineTracking(CogVideoXImageToVideoPipeline, Diffu
         # 打印transformer blocks的数量
         print(f"Number of transformer blocks: {len(self.transformer.transformer_blocks)}")
         print(f"Number of tracking transformer blocks: {len(self.transformer.transformer_blocks_copy)}")
+        self.transformer = torch.compile(self.transformer)
 
     @torch.no_grad()
     def __call__(
