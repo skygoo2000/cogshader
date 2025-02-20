@@ -118,6 +118,8 @@ if __name__ == "__main__":
         # Use the first frame from previously loaded video_tensor
         infer_result = moge.infer(video_tensor[0].to(das.device))  # [C, H, W] in range [0,1]
         H, W = infer_result["points"].shape[0:2]
+        pred_tracks = infer_result["points"].unsqueeze(0).repeat(49, 1, 1, 1) #[T, H, W, 3]
+        cam_motion.set_intr(infer_result["intrinsics"])
 
         # Apply object motion if specified
         if args.object_motion:
@@ -131,7 +133,7 @@ if __name__ == "__main__":
             mask = torch.from_numpy(np.array(mask_image) > 127)  # Threshold at 127
             
             motion_generator = ObjectMotionGenerator(device=das.device)
-            
+
             # Generate motion dictionary
             motion_dict = motion_generator.generate_motion(
                 mask=mask,
@@ -139,22 +141,23 @@ if __name__ == "__main__":
                 distance=50,
                 num_frames=49
             )
-            
             pred_tracks = motion_generator.apply_motion(
-                infer_result["points"],
+                pred_tracks,
                 motion_dict,
                 tracking_method="moge"
             )
             print("Object motion applied")
 
         # Apply camera motion if specified
-        cam_motion.set_intr(infer_result["intrinsics"])
         if args.camera_motion:
             poses = cam_motion.get_default_motion() # shape: [49, 4, 4]
-            pred_tracks_flatten = pred_tracks.reshape(video_tensor.shape[0], H*W, 3)
-            pred_tracks = cam_motion.w2s(pred_tracks_flatten, poses).reshape([video_tensor.shape[0], H, W, 3]) # [T, H, W, 3]
             print("Camera motion applied")
-
+        else:
+            # no poses
+            poses = torch.eye(4).unsqueeze(0).repeat(49, 1, 1)
+        # change pred_tracks into screen coordinate
+        pred_tracks_flatten = pred_tracks.reshape(video_tensor.shape[0], H*W, 3)
+        pred_tracks = cam_motion.w2s(pred_tracks_flatten, poses).reshape([video_tensor.shape[0], H, W, 3]) # [T, H, W, 3]
         _, tracking_tensor = das.visualize_tracking_moge(
             pred_tracks.cpu().numpy(), 
             infer_result["mask"].cpu().numpy()
@@ -201,7 +204,7 @@ if __name__ == "__main__":
     
         # Generate tracking tensor from modified tracks
         _, tracking_tensor = das.visualize_tracking_spatracker(video_tensor, pred_tracks, pred_visibility, T_Firsts)
-        
+    
     das.apply_tracking(
         video_tensor=video_tensor,
         fps=8,

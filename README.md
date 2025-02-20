@@ -1,10 +1,8 @@
-# Diffusion as Shader: 3D-aware Video Diffusion for Versatile Video Generation Control 🧪
+# Diffusion as Shader: 3D-aware Video Diffusion for Versatile Video Generation Control
 
-<table align="center">
-<tr>
-  <td align="center"><video src="https://igl-hkust.github.io/das/static/videos/teaser.mp4">Your browser does not support the video tag.</video></td>
-</tr>
-</table>
+## [Project page](https://igl-hkust.github.io/das/) | [Paper](https://arxiv.org/abs/2501.03847)
+
+![teaser](assets/teaser.gif)
 
 ## Quickstart
 
@@ -35,7 +33,7 @@ pip install git+https://github.com/asomoza/image_gen_aux.git
     pip install -r requirements.txt
     ```
 
-4. Manually download the SpatialTracker checkpoint to `checkpoints/`, from [Google Drive](https://drive.google.com/drive/folders/1UtzUJLPhJdUg2XvemXXz1oe6KUQKVjsZ). 
+4. Manually download the SpatialTracker checkpoint to `checkpoints/`, from [Google Drive](https://drive.google.com/drive/folders/1UtzUJLPhJdUg2XvemXXz1oe6KUQKVjsZ).  Official checkpoint can be found at: https://huggingface.co/EXCAI/Diffusion-As-Shader
 
 <!-- 5. Manually download the ZoeDepth checkpoints (dpt_beit_large_384.pt, ZoeD_M12_K.pt, ZoeD_M12_NK.pt) to `models/monoD/zoeDepth/ckpts/`. For more information, refer to [this issue](https://github.com/henry123-boy/SpaTracker/issues/20). -->
 
@@ -116,7 +114,7 @@ Or you can create your own object motion and camera motion as follows and replac
 It should be noted that depending on the tracker you choose, you may need to modify the scale of translation.
 
 #### 4. Animating meshes to video
-We only support using Blender (version > 4.0) to generate the tracking video now. Before running the following command, you need to install Blender and run the script `demo.py` in your blender project to generate the tracking video:
+We only support using Blender (version > 4.0) to generate the tracking video now. Before running the following command, you need to install Blender and run the script `scripts/blender.py` in your blender project and generate the tracking video for your blender project. Then you need to provide the tracking video path to the `tracking_path` argument:
 
 ```python
 python demo.py \

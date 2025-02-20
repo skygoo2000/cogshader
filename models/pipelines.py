@@ -282,6 +282,10 @@ class DiffusionAsShaderPipeline:
                 print(f"Warning: Failed to save tracking video: {e}")
                 tracking_path = None
         
+        # Convert tracking_video back to tensor in range [0,1]
+        tracking_frames = np.array(list(clip.iter_frames())) / 255.0
+        tracking_video = torch.from_numpy(tracking_frames).permute(0, 3, 1, 2).float()
+        
         return tracking_path, tracking_video
     
     ##============= MoGe =============##
@@ -374,9 +378,8 @@ class DiffusionAsShaderPipeline:
         normalized_z = np.clip((inv_z - p2) / (p98 - p2), 0, 1)
         colors[:, :, 2] = (normalized_z * 255).astype(np.uint8)
         colors = colors.astype(np.uint8)
-
-        colors = colors[mask]
-        points = points * mask[None, :, :, None]
+        # colors = colors * mask[..., None]
+        # points = points * mask[None, :, :, None]
         
         points = points.reshape(T, -1, 3)
         colors = colors.reshape(-1, 3)
@@ -703,7 +706,6 @@ class CameraMotionGenerator:
 
     def _look_at(self, camera_position, target_position):
         # look at direction
-        # import ipdb;ipdb.set_trace()
         direction = target_position - camera_position
         direction /= np.linalg.norm(direction)
         # calculate rotation matrix
@@ -890,29 +892,21 @@ class ObjectMotionGenerator:
         pred_tracks = pred_tracks.to(self.device).float()
         
         if tracking_method == "moge":
-
-            H = pred_tracks.shape[0]
-            W = pred_tracks.shape[1]
+            T, H, W, _ = pred_tracks.shape
             
-            initial_points = pred_tracks  # [H, W, 3]
             selected_mask = motion_dict['mask']
-            valid_selected = ~torch.any(torch.isnan(initial_points), dim=2) & selected_mask
+            valid_selected = ~torch.any(torch.isnan(pred_tracks[0]), dim=2) & selected_mask
             valid_selected = valid_selected.reshape([-1])
-            modified_tracks = pred_tracks.clone().reshape(-1, 3).unsqueeze(0).repeat(self.num_frames, 1, 1)
-            # import ipdb;ipdb.set_trace()
+            modified_tracks = pred_tracks.clone().reshape(T, -1, 3)
+
             for frame_idx in range(self.num_frames):
-                # Get current frame motion
                 motion_mat = motion_dict['motions'][frame_idx]
-                # Moge's pointcloud is scale-invairant
                 motion_mat[0, 3] /= W
                 motion_mat[1, 3] /= H
-                # Apply motion to selected points
                 points = modified_tracks[frame_idx, valid_selected]
-                # Convert to homogeneous coordinates
                 points_homo = torch.cat([points, torch.ones_like(points[:, :1])], dim=1)
-                # Apply transformation
+
                 transformed_points = torch.matmul(points_homo, motion_mat.T)
-                # Convert back to 3D coordinates
                 modified_tracks[frame_idx, valid_selected] = transformed_points[:, :3]
             return modified_tracks
             

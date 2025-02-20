@@ -115,22 +115,18 @@ class Visualizer:
         )
 
         if save_video:
-            # import ipdb; ipdb.set_trace()
             tracking_dir = os.path.join(self.save_dir, "tracking")
             if not os.path.exists(tracking_dir):
                 os.makedirs(tracking_dir)
             self.save_video(tracking_video, filename=filename+"_tracking", 
                             savedir=tracking_dir, writer=writer, step=step)
-            # with open(self.ttxt_path, 'a') as file:
-            #     file.write(f"tracking/{filename}_tracking.mp4\n")
 
             videos_dir = os.path.join(self.save_dir, "videos")
             if not os.path.exists(videos_dir):
                 os.makedirs(videos_dir)
             self.save_video(video, filename=filename, 
                             savedir=videos_dir, writer=writer, step=step)
-            # with open(self.vtxt_path, 'a') as file:
-            #     file.write(f"videos/{filename}.mp4\n")
+
             if video_depth is not None:
                 self.save_video(video_depth, filename=filename+"_depth", 
                                 savedir=os.path.join(self.save_dir, "depth"), writer=writer, step=step)
