@@ -78,11 +78,34 @@ python demo.py \
     --checkpoint_path <model_path> \ # checkpoint path
     --output_dir <output_dir> \ # output directory
     --input_path <input_path> \ # the reference image or video path
-    --camera_motion <camera_motion> \ # the camera motion type (rot, trans, spiral)
-    --tracking_method <tracking_method> \ # the tracking method (moge, spatracker). For image input, 'moge' is nesserary.
+    --camera_motion <camera_motion> \ # the camera motion type, see examples below
+    --tracking_method <tracking_method> \ # the tracking method (moge, spatracker). For image input, 'moge' is necessary.
     --gpu <gpu_id> \ # the gpu id
-
 ```
+
+Here are some tips for camera motion:
+- trans: translation motion, the camera will move in the direction of the vector (dx, dy, dz) with range [-1, 1]
+  - e.g., 'trans 0.1 0.1 0.1' moving left, up and zoom out
+  - e.g., 'trans 0.1 0.0 0.0 5 45' moving left from frame 5 to 45
+- rot: rotation motion, the camera will rotate around the axis (x, y, z) by the angle
+  - e.g., 'rot y 25' rotating 25 degrees around y-axis
+  - e.g., 'rot x -30 10 40' rotating -30 degrees around x-axis from frame 10 to 40
+- spiral: spiral motion, the camera will move in a spiral path with the given radius
+  - e.g., 'spiral 2' spiral motion with radius 2
+  - e.g., 'spiral 2 15 35' spiral motion with radius 2 from frame 15 to 35
+
+Multiple transformations can be combined using semicolon (;) as separator:
+- e.g., "trans 0 0 0.5 0 30; rot x 25 0 30; trans 0.1 0 0 30 48"
+  This will:
+  1. Zoom out (z+0.5) from frame 0 to 30
+  2. Rotate 25 degrees around x-axis from frame 0 to 30
+  3. Move left (x+0.1) from frame 30 to 48
+
+Notes:
+- Frame range is 0-48 (49 frames in total)
+- If start_frame and end_frame are not specified, the motion will be applied to all frames (0-48)
+- Frames after end_frame will maintain the final transformation
+- For combined transformations, they are applied in sequence
 
 #### 3. Object Manipulation
 We provide several template object manipulation types, you can choose one of them. In practice, we find that providing a description of the object motion in prompt will get better results.

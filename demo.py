@@ -74,7 +74,8 @@ if __name__ == "__main__":
     parser.add_argument('--tracking_path', type=str, default=None, help='Path to tracking video, if provided, camera motion and object manipulation will not be applied')
     parser.add_argument('--repaint', type=str, default=None, 
                        help='Path to repainted image, or "true" to perform repainting, if not provided use original frame')
-    parser.add_argument('--camera_motion', type=str, default=None, help='Camera motion mode')
+    parser.add_argument('--camera_motion', type=str, default=None, 
+                    help='Camera motion mode: "trans <dx> <dy> <dz>" or "rot <axis> <angle>" or "spiral <radius>"')
     parser.add_argument('--object_motion', type=str, default=None, help='Object motion mode: up/down/left/right')
     parser.add_argument('--object_mask', type=str, default=None, help='Path to object mask image (binary image)')
     parser.add_argument('--tracking_method', type=str, default="spatracker", 
@@ -134,16 +135,12 @@ if __name__ == "__main__":
             
             motion_generator = ObjectMotionGenerator(device=das.device)
 
-            # Generate motion dictionary
-            motion_dict = motion_generator.generate_motion(
+            pred_tracks = motion_generator.apply_motion(
+                pred_tracks=pred_tracks,
                 mask=mask,
                 motion_type=args.object_motion,
                 distance=50,
-                num_frames=49
-            )
-            pred_tracks = motion_generator.apply_motion(
-                pred_tracks,
-                motion_dict,
+                num_frames=49,
                 tracking_method="moge"
             )
             print("Object motion applied")
@@ -187,18 +184,13 @@ if __name__ == "__main__":
             
             motion_generator = ObjectMotionGenerator(device=das.device)
             
-            # Generate motion dictionary
-            motion_dict = motion_generator.generate_motion(
+            pred_tracks = motion_generator.apply_motion(
+                pred_tracks=pred_tracks.squeeze(),
                 mask=mask,
                 motion_type=args.object_motion,
                 distance=50,
-                num_frames=49
-            )
-            
-            pred_tracks = motion_generator.apply_motion(
-                pred_tracks.squeeze(),
-                motion_dict,
-                tracking_method="spatracker" 
+                num_frames=49,
+                tracking_method="spatracker"
             ).unsqueeze(0)
             print(f"Object motion '{args.object_motion}' applied using mask from {args.object_mask}")
     

@@ -642,43 +642,44 @@ class CameraMotionGenerator:
         self.intr = K.to(self.device)
 
     def rot_poses(self, angle, axis='y'):
-        """
-        pts (torch.Tensor): [T, N, 3]
-        angle (int): angle of rotation (degree)
+        """Generate a single rotation matrix
+        
+        Args:
+            angle (float): Rotation angle in degrees
+            axis (str): Rotation axis ('x', 'y', or 'z')
+            
+        Returns:
+            torch.Tensor: Single rotation matrix [4, 4]
         """
         angle_rad = math.radians(angle)
-        angles = torch.linspace(0, angle_rad, self.frame_num)
-        rot_mats = torch.zeros(self.frame_num, 4, 4)
-    
-        for i, theta in enumerate(angles):
-            cos_theta = torch.cos(theta)
-            sin_theta = torch.sin(theta)
-            if axis == 'x':
-                rot_mats[i] = torch.tensor([
+        cos_theta = torch.cos(torch.tensor(angle_rad))
+        sin_theta = torch.sin(torch.tensor(angle_rad))
+        
+        if axis == 'x':
+            rot_mat = torch.tensor([
                 [1, 0, 0, 0],
                 [0, cos_theta, -sin_theta, 0],
                 [0, sin_theta, cos_theta, 0],
                 [0, 0, 0, 1]
             ], dtype=torch.float32)
-            elif axis == 'y':
-                rot_mats[i] = torch.tensor([
-                    [cos_theta, 0, sin_theta, 0],
-                    [0, 1, 0, 0],
-                    [-sin_theta, 0, cos_theta, 0],
-                    [0, 0, 0, 1]
-                ], dtype=torch.float32)
+        elif axis == 'y':
+            rot_mat = torch.tensor([
+                [cos_theta, 0, sin_theta, 0],
+                [0, 1, 0, 0],
+                [-sin_theta, 0, cos_theta, 0],
+                [0, 0, 0, 1]
+            ], dtype=torch.float32)
+        elif axis == 'z':
+            rot_mat = torch.tensor([
+                [cos_theta, -sin_theta, 0, 0],
+                [sin_theta, cos_theta, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ], dtype=torch.float32)
+        else:
+            raise ValueError("Invalid axis value. Choose 'x', 'y', or 'z'.")
             
-            elif axis == 'z':
-                rot_mats[i] = torch.tensor([
-                    [cos_theta, -sin_theta, 0, 0],
-                    [sin_theta, cos_theta, 0, 0],
-                    [0, 0, 1, 0],
-                    [0, 0, 0, 1]
-                ], dtype=torch.float32)
-            else:
-                raise ValueError("Invalid axis value. Choose 'x', 'y', or 'z'.")
-            
-        return rot_mats.to(self.device)
+        return rot_mat.to(self.device)
 
     def trans_poses(self, dx, dy, dz):
         """
@@ -779,143 +780,242 @@ class CameraMotionGenerator:
         return pts
 
     def get_default_motion(self):
-        if self.motion_type == 'trans':
-            motion = self.trans_poses(0.1, 0, 0)
-        elif self.motion_type == 'spiral':
-            motion = self.spiral_poses(1)
-        elif self.motion_type == 'rot':
-            motion = self.rot_poses(-25, 'y')
-        else:
-            raise ValueError(f'camera_motion must be in [trans, spiral, rot], but get {self.motion_type}.')
-    
-        return motion
+        """Parse motion parameters and generate corresponding motion matrices
+        
+        Supported formats:
+        - trans <dx> <dy> <dz> [start_frame] [end_frame]: Translation motion
+        - rot <axis> <angle> [start_frame] [end_frame]: Rotation motion
+        - spiral <radius> [start_frame] [end_frame]: Spiral motion
+        
+        Multiple transformations can be combined using semicolon (;) as separator:
+        e.g., "trans 0 0 0.5 0 30; rot x 25 0 30; trans 0.1 0 0 30 48"
+        
+        Note:
+            - start_frame and end_frame are optional
+            - frame range: 0-49 (will be clamped to this range)
+            - if not specified, defaults to 0-49
+            - frames after end_frame will maintain the final transformation
+            - for combined transformations, they are applied in sequence
+        
+        Returns:
+            torch.Tensor: Motion matrices [num_frames, 4, 4]
+        """
+        if not isinstance(self.motion_type, str):
+            raise ValueError(f'camera_motion must be a string, but got {type(self.motion_type)}')
+        
+        # Split combined transformations
+        transform_sequences = [s.strip() for s in self.motion_type.split(';')]
+        
+        # Initialize the final motion matrices
+        final_motion = torch.eye(4, device=self.device).unsqueeze(0).repeat(49, 1, 1)
+        
+        # Process each transformation in sequence
+        for transform in transform_sequences:
+            params = transform.lower().split()
+            if not params:
+                continue
+                
+            motion_type = params[0]
+            
+            # Default frame range
+            start_frame = 0
+            end_frame = 48  # 49 frames in total (0-48)
+            
+            if motion_type == 'trans':
+                # Parse translation parameters
+                if len(params) not in [4, 6]:
+                    raise ValueError(f"trans motion requires 3 or 5 parameters: 'trans <dx> <dy> <dz>' or 'trans <dx> <dy> <dz> <start_frame> <end_frame>', got: {transform}")
+                
+                dx, dy, dz = map(float, params[1:4])
+                
+                if len(params) == 6:
+                    start_frame = max(0, min(48, int(params[4])))
+                    end_frame = max(0, min(48, int(params[5])))
+                    if start_frame > end_frame:
+                        start_frame, end_frame = end_frame, start_frame
+                
+                # Generate current transformation
+                current_motion = torch.eye(4, device=self.device).unsqueeze(0).repeat(49, 1, 1)
+                for frame_idx in range(49):
+                    if frame_idx < start_frame:
+                        continue
+                    elif frame_idx <= end_frame:
+                        t = (frame_idx - start_frame) / (end_frame - start_frame)
+                        current_motion[frame_idx, :3, 3] = torch.tensor([dx, dy, dz], device=self.device) * t
+                    else:
+                        current_motion[frame_idx] = current_motion[end_frame]
+                
+                # Combine with previous transformations
+                final_motion = torch.matmul(final_motion, current_motion)
+                
+            elif motion_type == 'rot':
+                # Parse rotation parameters
+                if len(params) not in [3, 5]:
+                    raise ValueError(f"rot motion requires 2 or 4 parameters: 'rot <axis> <angle>' or 'rot <axis> <angle> <start_frame> <end_frame>', got: {transform}")
+                
+                axis = params[1]
+                if axis not in ['x', 'y', 'z']:
+                    raise ValueError(f"Invalid rotation axis '{axis}', must be 'x', 'y' or 'z'")
+                angle = float(params[2])
+                
+                if len(params) == 5:
+                    start_frame = max(0, min(48, int(params[3])))
+                    end_frame = max(0, min(48, int(params[4])))
+                    if start_frame > end_frame:
+                        start_frame, end_frame = end_frame, start_frame
+                
+                current_motion = torch.eye(4, device=self.device).unsqueeze(0).repeat(49, 1, 1)
+                for frame_idx in range(49):
+                    if frame_idx < start_frame:
+                        continue
+                    elif frame_idx <= end_frame:
+                        t = (frame_idx - start_frame) / (end_frame - start_frame)
+                        current_angle = angle * t
+                        current_motion[frame_idx] = self.rot_poses(current_angle, axis)
+                    else:
+                        current_motion[frame_idx] = current_motion[end_frame]
+                
+                # Combine with previous transformations
+                final_motion = torch.matmul(final_motion, current_motion)
+                
+            elif motion_type == 'spiral':
+                # Parse spiral motion parameters
+                if len(params) not in [2, 4]:
+                    raise ValueError(f"spiral motion requires 1 or 3 parameters: 'spiral <radius>' or 'spiral <radius> <start_frame> <end_frame>', got: {transform}")
+                
+                radius = float(params[1])
+                
+                if len(params) == 4:
+                    start_frame = max(0, min(48, int(params[2])))
+                    end_frame = max(0, min(48, int(params[3])))
+                    if start_frame > end_frame:
+                        start_frame, end_frame = end_frame, start_frame
+                
+                current_motion = torch.eye(4, device=self.device).unsqueeze(0).repeat(49, 1, 1)
+                spiral_motion = self.spiral_poses(radius)
+                for frame_idx in range(49):
+                    if frame_idx < start_frame:
+                        continue
+                    elif frame_idx <= end_frame:
+                        t = (frame_idx - start_frame) / (end_frame - start_frame)
+                        idx = int(t * (len(spiral_motion) - 1))
+                        current_motion[frame_idx] = spiral_motion[idx]
+                    else:
+                        current_motion[frame_idx] = current_motion[end_frame]
+                
+                # Combine with previous transformations
+                final_motion = torch.matmul(final_motion, current_motion)
+                
+            else:
+                raise ValueError(f'camera_motion type must be in [trans, spiral, rot], but got {motion_type}')
+        
+        return final_motion
 
 class ObjectMotionGenerator:
     def __init__(self, device="cuda:0"):
-        """Initialize ObjectMotionGenerator
-        
-        Args:
-            device (str): Device to run on
-        """
         self.device = device
         self.num_frames = 49
         
     def _get_points_in_mask(self, pred_tracks, mask):
-        """Get points that fall within the mask in first frame
+        """Get points that lie within the mask
         
         Args:
-            pred_tracks (torch.Tensor): [num_frames, num_points, 3]
-            mask (torch.Tensor): [H, W] binary mask
+            pred_tracks (torch.Tensor): Point trajectories [num_frames, num_points, 3] 
+            mask (torch.Tensor): Binary mask [H, W]
             
         Returns:
-            torch.Tensor: Boolean mask of selected points [num_points]
+            torch.Tensor: Boolean mask for selected points [num_points]
         """
         first_frame_points = pred_tracks[0]  # [num_points, 3]
         xy_points = first_frame_points[:, :2]  # [num_points, 2]
         
-        # Convert xy coordinates to pixel indices
-        xy_pixels = xy_points.round().long()  # Convert to integer pixel coordinates
+        xy_pixels = xy_points.round().long()
+        xy_pixels[:, 0].clamp_(0, mask.shape[1] - 1)
+        xy_pixels[:, 1].clamp_(0, mask.shape[0] - 1)
         
-        # Clamp coordinates to valid range
-        xy_pixels[:, 0].clamp_(0, mask.shape[1] - 1)  # x coordinates
-        xy_pixels[:, 1].clamp_(0, mask.shape[0] - 1)  # y coordinates
-        
-        # Get mask values at point locations
-        points_in_mask = mask[xy_pixels[:, 1], xy_pixels[:, 0]]  # Index using y, x order
+        points_in_mask = mask[xy_pixels[:, 1], xy_pixels[:, 0]]
         
         return points_in_mask
-        
-    def generate_motion(self, mask, motion_type, distance, num_frames=49):
-        """Generate motion dictionary for the given parameters
-        
-        Args:
-            mask (torch.Tensor): [H, W] binary mask
-            motion_type (str): Motion direction ('up', 'down', 'left', 'right')
-            distance (float): Total distance to move
-            num_frames (int): Number of frames
-            
-        Returns:
-            dict: Motion dictionary containing:
-                - mask (torch.Tensor): Binary mask
-                - motions (torch.Tensor): Per-frame motion vectors [num_frames, 4, 4]
-        """
+
+    def apply_motion(self, pred_tracks, mask, motion_type, distance, num_frames=49, tracking_method="spatracker"):
 
         self.num_frames = num_frames
-        # Define motion template vectors
+        pred_tracks = pred_tracks.to(self.device).float()
+        mask = mask.to(self.device)
+
         template = {
-            'up': torch.tensor([0, -1, 0]),
-            'down': torch.tensor([0, 1, 0]),
-            'left': torch.tensor([-1, 0, 0]),
-            'right': torch.tensor([1, 0, 0]),
-            'front': torch.tensor([0, 0, 1]),
-            'back': torch.tensor([0, 0, -1])
+            'up': ('trans', torch.tensor([0, -1, 0])),
+            'down': ('trans', torch.tensor([0, 1, 0])), 
+            'left': ('trans', torch.tensor([-1, 0, 0])),
+            'right': ('trans', torch.tensor([1, 0, 0])),
+            'front': ('trans', torch.tensor([0, 0, 1])),
+            'back': ('trans', torch.tensor([0, 0, -1])),
+            'rot': ('rot', None) # rotate around y axis
         }
         
         if motion_type not in template:
-            raise ValueError(f"Unknown motion type: {motion_type}")
+            raise ValueError(f"unknown motion type: {motion_type}")
             
-        # Move mask to device
-        mask = mask.to(self.device)
+        motion_type, base_vec = template[motion_type]
+        if base_vec is not None:
+            base_vec = base_vec.to(self.device) * distance
+
+        if tracking_method == "moge":
+            T, H, W, _ = pred_tracks.shape
+            valid_selected = ~torch.any(torch.isnan(pred_tracks[0]), dim=2) & mask
+            points = pred_tracks[0][valid_selected].reshape(-1, 3)
+        else:
+            points_in_mask = self._get_points_in_mask(pred_tracks, mask)
+            points = pred_tracks[0, points_in_mask]
+            
+        center = points.mean(dim=0)
         
-        # Generate per-frame motion matrices
         motions = []
-        base_vec = template[motion_type].to(self.device) * distance
-        
         for frame_idx in range(num_frames):
-            # Calculate interpolation factor (0 to 1)
             t = frame_idx / (num_frames - 1)
-            
-            # Create motion matrix for current frame
             current_motion = torch.eye(4, device=self.device)
-            current_motion[:3, 3] = base_vec * t
+            current_motion[:3, 3] = -center
+            motion_mat = torch.eye(4, device=self.device)
+            if motion_type == 'trans':
+                motion_mat[:3, 3] = base_vec * t
+            else:  # 'rot'
+                angle_rad = torch.deg2rad(torch.tensor(distance * t, device=self.device))
+                cos_t = torch.cos(angle_rad)
+                sin_t = torch.sin(angle_rad)
+                motion_mat[0, 0] = cos_t
+                motion_mat[0, 2] = sin_t
+                motion_mat[2, 0] = -sin_t
+                motion_mat[2, 2] = cos_t
+            
+            current_motion = motion_mat @ current_motion
+            current_motion[:3, 3] += center
             motions.append(current_motion)
             
         motions = torch.stack(motions)  # [num_frames, 4, 4]
-        
-        return {
-            'mask': mask,
-            'motions': motions
-        }
-        
-    def apply_motion(self, pred_tracks, motion_dict, tracking_method="spatracker"):
-        """Apply motion to selected points
-        
-        Args:
-            pred_tracks (torch.Tensor): [num_frames, num_points, 3] for spatracker
-                                      or [T, H, W, 3] for moge
-            motion_dict (dict): Motion dictionary containing mask and motions
-            tracking_method (str): "spatracker" or "moge"
-            
-        Returns:
-            torch.Tensor: Modified pred_tracks with same shape as input
-        """
-        pred_tracks = pred_tracks.to(self.device).float()
-        
+
         if tracking_method == "moge":
-            T, H, W, _ = pred_tracks.shape
-            
-            selected_mask = motion_dict['mask']
-            valid_selected = ~torch.any(torch.isnan(pred_tracks[0]), dim=2) & selected_mask
-            valid_selected = valid_selected.reshape([-1])
             modified_tracks = pred_tracks.clone().reshape(T, -1, 3)
+            valid_selected = valid_selected.reshape([-1])
 
             for frame_idx in range(self.num_frames):
-                motion_mat = motion_dict['motions'][frame_idx]
-                motion_mat[0, 3] /= W
-                motion_mat[1, 3] /= H
+                motion_mat = motions[frame_idx]
+                if W > 1: 
+                    motion_mat = motion_mat.clone()
+                    motion_mat[0, 3] /= W
+                    motion_mat[1, 3] /= H
                 points = modified_tracks[frame_idx, valid_selected]
                 points_homo = torch.cat([points, torch.ones_like(points[:, :1])], dim=1)
-
                 transformed_points = torch.matmul(points_homo, motion_mat.T)
                 modified_tracks[frame_idx, valid_selected] = transformed_points[:, :3]
-            return modified_tracks
+            
+            return modified_tracks.reshape(T, H, W, 3)
             
         else:
-            points_in_mask = self._get_points_in_mask(pred_tracks, motion_dict['mask'])
+            points_in_mask = self._get_points_in_mask(pred_tracks, mask)
             modified_tracks = pred_tracks.clone()
             
             for frame_idx in range(pred_tracks.shape[0]):
-                motion_mat = motion_dict['motions'][frame_idx]
+                motion_mat = motions[frame_idx]
                 points = modified_tracks[frame_idx, points_in_mask]
                 points_homo = torch.cat([points, torch.ones_like(points[:, :1])], dim=1)
                 transformed_points = torch.matmul(points_homo, motion_mat.T)
