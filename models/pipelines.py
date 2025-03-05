@@ -85,7 +85,23 @@ class DiffusionAsShaderPipeline:
         - dtype (torch.dtype): The data type for computation.
         - seed (int): The seed for reproducibility.
         """
-        pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(model_path, torch_dtype=dtype)
+        from transformers import T5EncoderModel, T5Tokenizer
+        from diffusers import AutoencoderKLCogVideoX, CogVideoXDDIMScheduler
+        from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking
+        
+        vae = AutoencoderKLCogVideoX.from_pretrained(model_path, subfolder="vae")
+        text_encoder = T5EncoderModel.from_pretrained(model_path, subfolder="text_encoder")
+        tokenizer = T5Tokenizer.from_pretrained(model_path, subfolder="tokenizer")
+        transformer = CogVideoXTransformer3DModelTracking.from_pretrained(model_path, subfolder="transformer")
+        scheduler = CogVideoXDDIMScheduler.from_pretrained(model_path, subfolder="scheduler")
+        
+        pipe = CogVideoXImageToVideoPipelineTracking(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            transformer=transformer,
+            scheduler=scheduler
+        )
         
         # Convert tensor to PIL Image
         image_np = (image_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)

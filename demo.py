@@ -19,7 +19,6 @@ from diffusers.utils import load_image, load_video
 from models.pipelines import DiffusionAsShaderPipeline, FirstFrameRepainter, CameraMotionGenerator, ObjectMotionGenerator
 from submodules.MoGe.moge.model import MoGeModel
 
-
 def load_media(media_path, max_frames=49, transform=None):
     """Load video or image frames and convert to tensor
     
@@ -69,7 +68,7 @@ if __name__ == "__main__":
     parser.add_argument('--prompt', type=str, required=True, help='Repaint prompt')
     parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
     parser.add_argument('--gpu', type=int, default=0, help='GPU device ID')
-    parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to model checkpoint')
+    parser.add_argument('--checkpoint_path', type=str, default="EXCAI/Diffusion-As-Shader", help='Path to model checkpoint')
     parser.add_argument('--depth_path', type=str, default=None, help='Path to depth image')
     parser.add_argument('--tracking_path', type=str, default=None, help='Path to tracking video, if provided, camera motion and object manipulation will not be applied')
     parser.add_argument('--repaint', type=str, default=None, 
@@ -78,8 +77,8 @@ if __name__ == "__main__":
                     help='Camera motion mode: "trans <dx> <dy> <dz>" or "rot <axis> <angle>" or "spiral <radius>"')
     parser.add_argument('--object_motion', type=str, default=None, help='Object motion mode: up/down/left/right')
     parser.add_argument('--object_mask', type=str, default=None, help='Path to object mask image (binary image)')
-    parser.add_argument('--tracking_method', type=str, default="spatracker", 
-                        help='default tracking method for image input: moge/spatracker, if \'moge\' method will extract first frame for video input')
+    parser.add_argument('--tracking_method', type=str, default='spatracker', choices=['spatracker', 'moge'], 
+                    help='Tracking method to use (spatracker or moge)')
     args = parser.parse_args()
     
     # Load input video/image

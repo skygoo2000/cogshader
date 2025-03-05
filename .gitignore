@@ -197,3 +197,4 @@ slurm-*.out
 .vscode
 
 data/
+tmp/
