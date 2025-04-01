@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 try:
     sys.path.append(os.path.join(project_root, "submodules/MoGe"))
+    sys.path.append(os.path.join(project_root, "submodules/vggt"))
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 except:
     print("Warning: MoGe not found, motion transfer will not be applied")
@@ -21,7 +22,7 @@ from models.spatracker.predictor import SpaTrackerPredictor
 from models.spatracker.utils.visualizer import Visualizer
 from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking
 
-from submodules.MoGe.moge.model import MoGeModel
+from submodules.MoGe.moge.model.v1 import MoGeModel
 
 from image_gen_aux import DepthPreprocessor
 from moviepy.editor import ImageSequenceClip
@@ -786,7 +787,7 @@ class CameraMotionGenerator:
         
         return world_points
 
-    def w2s_vggt(self, world_points, extrinsics, intrinsics, poses=None):
+    def w2s_vggt(self, world_points, extrinsics, intrinsics, poses=None, override_extrinsics=True):
         """
         Project points from world coordinates to camera view
         
@@ -795,6 +796,7 @@ class CameraMotionGenerator:
             extrinsics: Original camera extrinsic matrices [B, T, 3, 4] or [T, 3, 4]
             intrinsics: Camera intrinsic matrices [B, T, 3, 3] or [T, 3, 3]
             poses: Camera pose matrices [T, 4, 4], if None use first frame extrinsics
+            override_extrinsics: If True, replace extrinsics with poses; if False, apply poses on top of extrinsics
             
         Returns:
             camera_points: Point cloud in camera coordinates [T, N, 3] in uvz format
@@ -831,6 +833,20 @@ class CameraMotionGenerator:
             scaled_poses = camera_poses.copy()
             scaled_poses[:, :3, 3] = camera_poses[:, :3, 3] / 5.0
             camera_poses = scaled_poses
+            
+            # If not overriding extrinsics, combine poses with original extrinsics
+            if not override_extrinsics and poses is not None:
+                for i in range(T):
+                    # Convert extrinsics to 4x4 matrix
+                    ext_mat = np.eye(4)
+                    ext_mat[:3, :3] = extrinsics[i, :, :3]
+                    ext_mat[:3, 3] = extrinsics[i, :, 3]
+                    
+                    # Combine pose with extrinsics: pose * extrinsics
+                    combined = np.matmul(camera_poses[i], ext_mat)
+                    
+                    # Update camera_poses
+                    camera_poses[i] = combined
         
         # Add homogeneous coordinates
         ones = np.ones([T, N, 1])

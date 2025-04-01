@@ -1,6 +1,10 @@
 # Diffusion as Shader: 3D-aware Video Diffusion for Versatile Video Generation Control
 
-## [Project page](https://igl-hkust.github.io/das/) | [Paper](https://arxiv.org/abs/2501.03847)
+![Version](https://img.shields.io/badge/version-1.0.0-blue) &nbsp;
+ <a href='https://arxiv.org/abs/2501.03847'><img src='https://img.shields.io/badge/arXiv-2501.03847-b31b1b.svg'></a> &nbsp;
+ <a href='https://igl-hkust.github.io/das/'><img src='https://img.shields.io/badge/Project-Page-Green'></a> &nbsp;
+[![HuggingFace Model](https://img.shields.io/badge/🤗%20Hugging%20Face-Model-green)](https://huggingface.co/EXCAI/Diffusion-As-Shader)&nbsp;
+[![HuggingFace Spaces](https://img.shields.io/badge/🤗%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/EXCAI/Diffusion-As-Shader)
 
 ![teaser](assets/teaser.gif)
 
@@ -29,11 +33,21 @@ pip install git+https://github.com/asomoza/image_gen_aux.git
 
 3. Make sure the submodule and requirements are installed:
     ```
+    mkdir -p submodules
     git submodule update --init --recursive
     pip install -r requirements.txt
     ```
+    If the submodules are not installed, you need to manually download them and move them to `submodules/`. Run the following commands to install the submodules:
+    ```
+    # MoGe
+    git clone https://github.com/microsoft/MoGe.git submodules/MoGe
+    # VGGT
+    git clone https://github.com/facebookresearch/vggt.git submodules/vggt
+    ```
 
-4. Manually download the SpatialTracker checkpoint to `checkpoints/`, from [Google Drive](https://drive.google.com/drive/folders/1UtzUJLPhJdUg2XvemXXz1oe6KUQKVjsZ).  Official checkpoint can be found at: https://huggingface.co/EXCAI/Diffusion-As-Shader
+4. Manually download these checkpoints:
+   - SpatialTracker checkpoint: [Google Drive](https://drive.google.com/drive/folders/1UtzUJLPhJdUg2XvemXXz1oe6KUQKVjsZ) and move it to `checkpoints/`.
+   - Our *Diffusion as Shader* checkpoint: https://huggingface.co/EXCAI/Diffusion-As-Shader
 
 <!-- 5. Manually download the ZoeDepth checkpoints (dpt_beit_large_384.pt, ZoeD_M12_K.pt, ZoeD_M12_NK.pt) to `models/monoD/zoeDepth/ckpts/`. For more information, refer to [this issue](https://github.com/henry123-boy/SpaTracker/issues/20). -->
 
@@ -56,7 +70,14 @@ The inference code was tested on
 - 1 NVIDIA H800 with CUDA version 11.8. (32GB GPU memory is sufficient for generating videos with our code.)
 
 We provide a inference script for our tasks. You can run the `demo.py` script directly as follows.
+**We also provide a validation dataset in [Google Drive](https://drive.google.com/file/d/1pVB_2AEoz1v4vXWe6-pdDAEQdmlGEIci/view?usp=sharing) for our 4 tasks. You can run the `scripts/evaluate_DaS.sh` to evaluate the performance of our model.**
 
+We release the gradio interface for our tasks. You can run the `webui.py` script directly as follows.
+```
+python webui.py --gpu <gpu_id>
+```
+
+Or you can run these tasks one by one as follows.
 
 #### 1. Motion Transfer 
 ```python
@@ -71,6 +92,30 @@ python demo.py \
 ```
 
 #### 2. Camera Control
+
+<table border="1">
+<tr>
+  <th>Arc Right + Zoom out</th>
+  <th>Arc Left + Zoom out</th>
+  <th>Arc Up + Zoom out</th>
+</tr>
+<tr>
+  <td><img src="assets/videos/panright+out.gif" alt="Pans Right + Zoom out"></td>
+  <td><img src="assets/videos/panleft+out.gif" alt="Pans Left + Zoom out"></td>
+  <td><img src="assets/videos/panup+out.gif" alt="Pans Up + Zoom out"></td>
+</tr>
+<tr>
+  <th>Pans Right</th>
+  <th>Static</th>
+  <th>Zoom out</th>
+</tr>
+<tr>
+  <td><img src="assets/videos/car_panright.gif" alt="Pans Right"></td>
+  <td><img src="assets/videos/car_static.gif" alt="Static"></td>
+  <td><img src="assets/videos/car_zoomout.gif" alt="Zoom out"></td>
+</tr>
+</table>
+
 We provide several template camera motion types, you can choose one of them. In practice, we find that providing a description of the camera motion in prompt will get better results.
 ```python
 python demo.py \
@@ -79,27 +124,34 @@ python demo.py \
     --output_dir <output_dir> \ # output directory
     --input_path <input_path> \ # the reference image or video path
     --camera_motion <camera_motion> \ # the camera motion type, see examples below
-    --tracking_method <tracking_method> \ # the tracking method (moge, spatracker). For image input, 'moge' is necessary.
+    --tracking_method <tracking_method> \ # the tracking method (moge, spatracker, cotracker). For image input, 'moge' is necessary.
+    --override_extrinsics <override/append> \ # how to apply camera motion: "override" to replace original camera, "append" to build upon it
     --gpu <gpu_id> \ # the gpu id
 ```
 
 Here are some tips for camera motion:
 - trans: translation motion, the camera will move in the direction of the vector (dx, dy, dz) with range [-1, 1]
-  - e.g., 'trans 0.1 0.1 0.1' moving left, up and zoom out
-  - e.g., 'trans 0.1 0.0 0.0 5 45' moving left from frame 5 to 45
+  - Positive X: Move right, Negative X: Move left
+  - Positive Y: Move down, Negative Y: Move up
+  - Positive Z: Zoom in, Negative Z: Zoom out
+  - e.g., 'trans -0.1 -0.1 -0.1' moving left, down and zoom in
+  - e.g., 'trans -0.1 0.0 0.0 5 45' moving left 0.1 from frame 5 to 45
 - rot: rotation motion, the camera will rotate around the axis (x, y, z) by the angle
-  - e.g., 'rot y 25' rotating 25 degrees around y-axis
-  - e.g., 'rot x -30 10 40' rotating -30 degrees around x-axis from frame 10 to 40
+  - X-axis rotation: positive X: pitch down, negative X: pitch up
+  - Y-axis rotation: positive Y: yaw left, negative Y: yaw right
+  - Z-axis rotation: positive Z: roll counter-clockwise, negative Z: roll clockwise
+  - e.g., 'rot y 25' rotating 25 degrees around y-axis (yaw left)
+  - e.g., 'rot x -30 10 40' rotating -30 degrees around x-axis (pitch up) from frame 10 to 40
 - spiral: spiral motion, the camera will move in a spiral path with the given radius
   - e.g., 'spiral 2' spiral motion with radius 2
   - e.g., 'spiral 2 15 35' spiral motion with radius 2 from frame 15 to 35
 
 Multiple transformations can be combined using semicolon (;) as separator:
-- e.g., "trans 0 0 0.5 0 30; rot x 25 0 30; trans 0.1 0 0 30 48"
+- e.g., "trans 0 0 -0.5 0 30; rot x -25 0 30; trans -0.1 0 0 30 48"
   This will:
-  1. Zoom out (z+0.5) from frame 0 to 30
-  2. Rotate 25 degrees around x-axis from frame 0 to 30
-  3. Move left (x+0.1) from frame 30 to 48
+  1. Zoom in (z-0.5) from frame 0 to 30
+  2. Pitch up (rotate -25 degrees around x-axis) from frame 0 to 30
+  3. Move left (x-0.1) from frame 30 to 48
 
 Notes:
 - Frame range is 0-48 (49 frames in total)
@@ -137,6 +189,14 @@ Or you can create your own object motion and camera motion as follows and replac
 It should be noted that depending on the tracker you choose, you may need to modify the scale of translation.
 
 #### 4. Animating meshes to video
+
+<table border="1">
+<tr>
+  <td><img src="assets/videos/m2v1.gif" alt="video 1"></td>
+  <td><img src="assets/videos/m2v2.gif" alt="video 2"></td>
+</tr>
+</table>
+
 We only support using Blender (version > 4.0) to generate the tracking video now. Before running the following command, you need to install Blender and run the script `scripts/blender.py` in your blender project and generate the tracking video for your blender project. Then you need to provide the tracking video path to the `tracking_path` argument:
 
 ```python
@@ -300,6 +360,7 @@ This project builds upon several excellent open source projects:
 
 * [MoGe](https://github.com/microsoft/MoGe) - Microsoft's monocular geometry estimation model that helps achieve more accurate 3D reconstruction.
 
+* [vggt](https://github.com/facebookresearch/vggt) - Facebook's video generation model that provides the foundational architecture for this project.
 We thank the authors and contributors of these projects for their valuable contributions to the open source community!
 
 ## Citation

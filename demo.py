@@ -18,7 +18,7 @@ from moviepy.editor import VideoFileClip
 from diffusers.utils import load_image, load_video
 
 from models.pipelines import DiffusionAsShaderPipeline, FirstFrameRepainter, CameraMotionGenerator, ObjectMotionGenerator
-from submodules.MoGe.moge.model import MoGeModel
+from submodules.MoGe.moge.model.v1 import MoGeModel
 from submodules.vggt.vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from submodules.vggt.vggt.models.vggt import VGGT
 
@@ -107,6 +107,8 @@ if __name__ == "__main__":
                        help='Path to repainted image, or "true" to perform repainting, if not provided use original frame')
     parser.add_argument('--camera_motion', type=str, default=None, 
                     help='Camera motion mode: "trans <dx> <dy> <dz>" or "rot <axis> <angle>" or "spiral <radius>"')
+    parser.add_argument('--override_extrinsics', type=str, default="append", choices=["override", "append"],
+                help='How to apply camera motion: "override" to replace original camera, "append" to build upon it. Override is experimental and may not work as expected.')
     parser.add_argument('--object_motion', type=str, default=None, help='Object motion mode: up/down/left/right')
     parser.add_argument('--object_mask', type=str, default=None, help='Path to object mask image (binary image)')
     parser.add_argument('--tracking_method', type=str, default='spatracker', choices=['spatracker', 'moge', 'cotracker'], 
@@ -227,11 +229,14 @@ if __name__ == "__main__":
         cam_motion.set_intr(intr)
         cam_motion.set_extr(extr)
 
+        del vggt_model
+
         # Apply camera motion if specified
         if args.camera_motion:
             poses = cam_motion.get_default_motion() # shape: [49, 4, 4]
             pred_tracks_world = cam_motion.s2w_vggt(pred_tracks, extr, intr)
-            pred_tracks = cam_motion.w2s_vggt(pred_tracks_world, extr, intr, poses) # [T, N, 3]
+            pred_tracks = cam_motion.w2s_vggt(pred_tracks_world, extr, intr, poses, 
+                                 override_extrinsics=(args.override_extrinsics == "override"))
             print("Camera motion applied")
         
         # Apply object motion if specified

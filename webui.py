@@ -182,7 +182,7 @@ def process_motion_transfer(source, prompt, mt_repaint_option, mt_repaint_image)
         print(f"Processing failed: {str(e)}\n{traceback.format_exc()}")
         return None
 
-def process_camera_control(source, prompt, camera_motion, tracking_method):
+def process_camera_control(source, prompt, camera_motion, tracking_method, override_extrinsics):
     """Process camera control task"""
     try:
         # Save uploaded files
@@ -192,6 +192,7 @@ def process_camera_control(source, prompt, camera_motion, tracking_method):
         
         print(f"DEBUG: Camera motion: '{camera_motion}'")
         print(f"DEBUG: Tracking method: '{tracking_method}'")
+        print(f"DEBUG: Override extrinsics: '{override_extrinsics}'")
         
         args = {
             "input_path": input_media_path,
@@ -204,6 +205,12 @@ def process_camera_control(source, prompt, camera_motion, tracking_method):
         
         if camera_motion and camera_motion.strip():
             args["camera_motion"] = camera_motion
+            
+        # 设置 override_extrinsics 参数
+        if override_extrinsics == "Apply on top of extrinsics (preserve original camera)":
+            args["override_extrinsics"] = "append"
+        else:
+            args["override_extrinsics"] = "override"
         
         # Create and run command
         cmd = create_run_command(args)
@@ -359,32 +366,41 @@ with gr.Blocks(title="Diffusion as Shader") as demo:
             # Camera Control tab
             with gr.TabItem("Camera Control"):
                 gr.Markdown("## Camera Control")
-                
+
                 cc_camera_motion = gr.Textbox(
                     label="Current Camera Motion Sequence",
                     placeholder="Your camera motion sequence will appear here...",
                     interactive=False
                 )
+
+                cc_override_extrinsics = gr.Radio(
+                    label="Camera Motion Application Mode",
+                    choices=["Append (preserve original camera)", "Override (replace original camera) (experimental)"],
+                    value="Append (preserve original camera)",
+                    info="Controls how camera motion is applied: either replacing the original camera parameters or building upon them. Override is experimental and may not work as expected."
+                )
                 
                 # Use tabs for different motion types
                 with gr.Tabs() as cc_motion_tabs:
+                    
                     # Translation tab
                     with gr.TabItem("Translation (trans)"):
+                    
+                        cc_trans_note = gr.Markdown("""
+                        **Translation Notes:**
+                        - Positive X: Move right, Negative X: Move left
+                        - Positive Y: Move up, Negative Y: Move down
+                        - Positive Z: Zoom out, Negative Z: Zoom in
+                        """)
+
                         with gr.Row():
-                            cc_trans_x = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="X-axis Movement")
-                            cc_trans_y = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="Y-axis Movement")
-                            cc_trans_z = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="Z-axis Movement (depth)")
+                            cc_trans_x = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="X-axis left- right+")
+                            cc_trans_y = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="Y-axis up- down+")
+                            cc_trans_z = gr.Slider(minimum=-1.0, maximum=1.0, value=0.0, step=0.05, label="Z-axis zoom_out- zoom_in+")
                         
                         with gr.Row():
                             cc_trans_start = gr.Number(minimum=0, maximum=48, value=0, step=1, label="Start Frame", precision=0)
                             cc_trans_end = gr.Number(minimum=0, maximum=48, value=48, step=1, label="End Frame", precision=0)
-                        
-                        cc_trans_note = gr.Markdown("""
-                        **Translation Notes:**
-                        - Positive X: Move right, Negative X: Move left
-                        - Positive Y: Move down, Negative Y: Move up
-                        - Positive Z: Zoom in, Negative Z: Zoom out
-                        """)
                         
                         # Add translation button in the Translation tab
                         cc_add_trans = gr.Button("Add Camera Translation", variant="secondary")
@@ -415,6 +431,14 @@ with gr.Blocks(title="Diffusion as Shader") as demo:
                     
                     # Rotation tab
                     with gr.TabItem("Rotation (rot)"):
+
+                        cc_rot_note = gr.Markdown("""
+                        **Rotation Notes:**
+                        - X-axis rotation: positive X: pitch down, negative X: pitch up
+                        - Y-axis rotation: positive Y: yaw left, negative Y: yaw right
+                        - Z-axis rotation: positive Z: roll counter-clockwise, negative Z: roll clockwise
+                        """)
+
                         with gr.Row():
                             cc_rot_axis = gr.Dropdown(choices=["x", "y", "z"], value="y", label="Rotation Axis")
                             cc_rot_angle = gr.Slider(minimum=-30, maximum=30, value=5, step=1, label="Rotation Angle (degrees)")
@@ -422,13 +446,6 @@ with gr.Blocks(title="Diffusion as Shader") as demo:
                         with gr.Row():
                             cc_rot_start = gr.Number(minimum=0, maximum=48, value=0, step=1, label="Start Frame", precision=0)
                             cc_rot_end = gr.Number(minimum=0, maximum=48, value=48, step=1, label="End Frame", precision=0)
-                        
-                        cc_rot_note = gr.Markdown("""
-                        **Rotation Notes:**
-                        - X-axis rotation: Tilt camera up/down
-                        - Y-axis rotation: Pan camera left/right
-                        - Z-axis rotation: Roll camera
-                        """)
                         
                         # Add rotation button in the Rotation tab
                         cc_add_rot = gr.Button("Add Camera Rotation", variant="secondary")
@@ -483,7 +500,7 @@ with gr.Blocks(title="Diffusion as Shader") as demo:
                     fn=process_camera_control,
                     inputs=[
                         source, common_prompt,
-                        cc_camera_motion, cc_tracking_method
+                        cc_camera_motion, cc_tracking_method, cc_override_extrinsics
                     ],
                     outputs=[output_video]
                 )
