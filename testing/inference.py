@@ -15,8 +15,7 @@ import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, '..'))
-from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking, CogVideoXPipelineTracking, CogVideoXVideoToVideoPipelineTracking
-from models.cogvideox_tracking import CogVideoXTransformer3DModelTracking
+from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking
 
 def generate_video(
     prompt: str,
@@ -159,7 +158,9 @@ def generate_video(
                 generator=torch.Generator().manual_seed(seed),
             ).frames[0]
     # 5. Export the generated frames to a video file. fps must be 8 for original video.
-    output_path = output_path if output_path else f"{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}]_txt[{prompt}].mp4"
+    output_path = output_path if output_path else f"{generate_type}_img[{os.path.splitext(os.path.basename(image_or_video_path))[0]}].mp4"
+    if not output_path.lower().endswith(('.mp4', '.avi', '.mov', '.gif')):
+        output_path += '.mp4'
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     export_to_video(video_generate, output_path, fps=fps)
 
@@ -174,7 +175,7 @@ if __name__ == "__main__":
         help="The path of the image to be used as the background of the video",
     )
     parser.add_argument(
-        "--model_path", type=str, default="THUDM/CogVideoX-5b", help="The path of the pre-trained model to be used"
+        "--model_path", type=str, default="THUDM/CogVideoX-5b-I2V", help="The path of the pre-trained model to be used"
     )
     parser.add_argument(
         "--output_path", type=str, default="./output.mp4", help="The path where the generated video will be saved"

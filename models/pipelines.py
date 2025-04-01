@@ -22,6 +22,7 @@ from models.spatracker.utils.visualizer import Visualizer
 from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking
 
 from submodules.MoGe.moge.model import MoGeModel
+
 from image_gen_aux import DepthPreprocessor
 from moviepy.editor import ImageSequenceClip
 
@@ -44,6 +45,7 @@ class DiffusionAsShaderPipeline:
         # device
         self.device = f"cuda:{gpu_id}"
         torch.cuda.set_device(gpu_id)
+        self.dtype = torch.bfloat16
 
         # files
         self.output_dir = output_dir
@@ -63,7 +65,7 @@ class DiffusionAsShaderPipeline:
         tracking_tensor: torch.Tensor = None,
         image_tensor: torch.Tensor = None,  # [C,H,W] in range [0,1]
         output_path: str = "./output.mp4",
-        num_inference_steps: int = 50,
+        num_inference_steps: int = 25,
         guidance_scale: float = 6.0,
         num_videos_per_prompt: int = 1,
         dtype: torch.dtype = torch.bfloat16,
@@ -111,6 +113,8 @@ class DiffusionAsShaderPipeline:
         pipe.transformer.eval()
         pipe.text_encoder.eval()
         pipe.vae.eval()
+
+        self.dtype = dtype
 
         # Process tracking tensor
         tracking_maps = tracking_tensor.float() # [T, C, H, W]
@@ -165,56 +169,6 @@ class DiffusionAsShaderPipeline:
 
     def _set_camera_motion(self, camera_motion):
         self.camera_motion = camera_motion
-
-    def _get_intr(self, fov, H=480, W=720):
-        fov_rad = math.radians(fov)
-        focal_length = (W / 2) / math.tan(fov_rad / 2)
-
-        cx = W / 2
-        cy = H / 2
-
-        intr = torch.tensor([
-            [focal_length, 0, cx],
-            [0, focal_length, cy],
-            [0, 0, 1]
-        ], dtype=torch.float32)
-
-        return intr
-
-    def _apply_poses(self, pts, intr, poses):
-        """
-        Args:
-            pts (torch.Tensor): pointclouds coordinates [T, N, 3]
-            intr (torch.Tensor): camera intrinsics [T, 3, 3]
-            poses (numpy.ndarray): camera poses [T, 4, 4]
-        """
-        poses = torch.from_numpy(poses).float().to(self.device)
-        
-        T, N, _ = pts.shape
-        ones = torch.ones(T, N, 1, device=self.device, dtype=torch.float)
-        pts_hom = torch.cat([pts[:, :, :2], ones], dim=-1)  # (T, N, 3)
-        pts_cam = torch.bmm(pts_hom, torch.linalg.inv(intr).transpose(1, 2))  # (T, N, 3)
-        pts_cam[:,:, :3] /= pts[:, :, 2:3]
-
-        # to homogeneous
-        pts_cam = torch.cat([pts_cam, ones], dim=-1)  # (T, N, 4)
-        
-        if poses.shape[0] == 1:
-            poses = poses.repeat(T, 1, 1)
-        elif poses.shape[0] != T:
-            raise ValueError(f"Poses length ({poses.shape[0]}) must match sequence length ({T})")
-        
-        pts_world = torch.bmm(pts_cam, poses.transpose(1, 2))[:, :, :3]  # (T, N, 3)
-
-        pts_proj = torch.bmm(pts_world, intr.transpose(1, 2))  # (T, N, 3)
-        pts_proj[:, :, :2] /= pts_proj[:, :, 2:3]
-
-        return pts_proj
-    
-    def apply_traj_on_tracking(self, pred_tracks, camera_motion=None, fov=55, frame_num=49):
-        intr = self._get_intr(fov).unsqueeze(0).repeat(frame_num, 1, 1).to(self.device)
-        tracking_pts = self._apply_poses(pred_tracks.squeeze(), intr, camera_motion).unsqueeze(0)
-        return tracking_pts
     
     ##============= SpatialTracker =============##
     
@@ -236,8 +190,7 @@ class DiffusionAsShaderPipeline:
         ).to(self.device)
         
         # Load depth model
-        self.depth_preprocessor = DepthPreprocessor.from_pretrained("Intel/zoedepth-nyu-kitti")
-        self.depth_preprocessor.to(self.device)
+        self.depth_preprocessor = DepthPreprocessor.from_pretrained("Intel/zoedepth-nyu-kitti").to(self.device)
         
         try:
             video = video_tensor.unsqueeze(0).to(self.device)
@@ -265,7 +218,7 @@ class DiffusionAsShaderPipeline:
                 progressive_tracking=False
             )
 
-            return pred_tracks, pred_visibility, T_Firsts
+            return pred_tracks.squeeze(0), pred_visibility.squeeze(0), T_Firsts
             
         finally:
             # Clean up GPU memory
@@ -274,8 +227,13 @@ class DiffusionAsShaderPipeline:
 
     def visualize_tracking_spatracker(self, video, pred_tracks, pred_visibility, T_Firsts, save_tracking=True):
         video = video.unsqueeze(0).to(self.device)
+        pred_tracks = pred_tracks.unsqueeze(0).detach().cpu()
+        pred_visibility = pred_visibility.unsqueeze(0).detach().cpu()
         vis = Visualizer(save_dir=self.output_dir, grayscale=False, fps=24, pad_value=0)
+        
+        T_Firsts = T_Firsts.detach().cpu() if isinstance(T_Firsts, torch.Tensor) else T_Firsts
         msk_query = (T_Firsts == 0)
+        
         pred_tracks = pred_tracks[:,:,msk_query.squeeze()]
         pred_visibility = pred_visibility[:,:,msk_query.squeeze()]
         
@@ -394,8 +352,6 @@ class DiffusionAsShaderPipeline:
         normalized_z = np.clip((inv_z - p2) / (p98 - p2), 0, 1)
         colors[:, :, 2] = (normalized_z * 255).astype(np.uint8)
         colors = colors.astype(np.uint8)
-        # colors = colors * mask[..., None]
-        # points = points * mask[None, :, :, None]
         
         points = points.reshape(T, -1, 3)
         colors = colors.reshape(-1, 3)
@@ -403,7 +359,7 @@ class DiffusionAsShaderPipeline:
         # Initialize list to store frames
         frames = []
         
-        for i, pts_i in enumerate(tqdm(points)):
+        for i, pts_i in enumerate(tqdm(points, desc="rendering frames")):
             pixels, depths = pts_i[..., :2], pts_i[..., 2]
             pixels[..., 0] = pixels[..., 0] * W
             pixels[..., 1] = pixels[..., 1] * H
@@ -446,6 +402,178 @@ class DiffusionAsShaderPipeline:
                 tracking_path = None
 
         return tracking_path, tracking_video
+
+
+    ##============= CoTracker =============##
+
+    def generate_tracking_cotracker(self, video_tensor, density=70):
+        """Generate tracking video
+        
+        Args:
+            video_tensor (torch.Tensor): Input video tensor
+            
+        Returns:
+            tuple: (pred_tracks, pred_visibility)
+                - pred_tracks (torch.Tensor): Tracking points with depth [T, N, 3]
+                - pred_visibility (torch.Tensor): Visibility mask [T, N, 1]
+        """
+        # Generate tracking points
+        if not hasattr(self, 'cotracker') or self.cotracker is None:
+            self.cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker3_offline").to(self.device)
+        
+        # Load depth model
+        if not hasattr(self, 'depth_preprocessor') or self.depth_preprocessor is None:
+            self.depth_preprocessor = DepthPreprocessor.from_pretrained("Intel/zoedepth-nyu-kitti").to(self.device)
+        
+        try:
+            video = video_tensor.unsqueeze(0).to(self.device)
+            
+            # Process all frames to get depth maps
+            video_depths = []
+            for i in tqdm(range(video_tensor.shape[0]), desc="estimating depth"):
+                frame = (video_tensor[i].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                depth = self.depth_preprocessor(Image.fromarray(frame))[0]
+                depth_tensor = transforms.ToTensor()(depth)  # [1, H, W]
+                video_depths.append(depth_tensor)
+            
+            video_depth = torch.stack(video_depths, dim=0).to(self.device)  # [T, 1, H, W]
+            
+            # Get tracking points and visibility
+            print("tracking...")
+            pred_tracks, pred_visibility = self.cotracker(video, grid_size=density)  # B T N 2,  B T N 1
+            
+            # Extract dimensions
+            B, T, N, _ = pred_tracks.shape
+            H, W = video_depth.shape[2], video_depth.shape[3]
+            
+            # Create output tensor with depth
+            pred_tracks_with_depth = torch.zeros((B, T, N, 3), device=self.device)
+            pred_tracks_with_depth[:, :, :, :2] = pred_tracks  # Copy x,y coordinates
+            
+            # Vectorized approach to get depths for all points
+            # Reshape pred_tracks to process all batches and frames at once
+            flat_tracks = pred_tracks.reshape(B*T, N, 2)
+            
+            # Clamp coordinates to valid image bounds
+            x_coords = flat_tracks[:, :, 0].clamp(0, W-1).long()  # [B*T, N]
+            y_coords = flat_tracks[:, :, 1].clamp(0, H-1).long()  # [B*T, N]
+            
+            # Get depths for all points at once
+            # For each point in the flattened batch, get its depth from the corresponding frame
+            depths = torch.zeros((B*T, N), device=self.device)
+            for bt in range(B*T):
+                t = bt % T  # Time index
+                depths[bt] = video_depth[t, 0, y_coords[bt], x_coords[bt]]
+            
+            # Reshape depths back to [B, T, N] and assign to output tensor
+            pred_tracks_with_depth[:, :, :, 2] = depths.reshape(B, T, N)
+
+            return pred_tracks_with_depth.squeeze(0), pred_visibility.squeeze(0)
+            
+        finally:
+            del self.cotracker
+            del self.depth_preprocessor
+            torch.cuda.empty_cache()
+
+    def visualize_tracking_cotracker(self, points, vis_mask=None, save_tracking=True, point_wise=4, video_size=(480, 720)):
+        """Visualize tracking results from CoTracker
+        
+        Args:
+            points (torch.Tensor): Points array of shape [T, N, 3]
+            vis_mask (torch.Tensor): Visibility mask of shape [T, N, 1]
+            save_tracking (bool): Whether to save tracking video
+            point_wise (int): Size of points in visualization
+            video_size (tuple): Render size (height, width)
+            
+        Returns:
+            tuple: (tracking_path, tracking_video)
+        """
+        # Move tensors to CPU and convert to numpy
+        if isinstance(points, torch.Tensor):
+            points = points.detach().cpu().numpy()
+        
+        if vis_mask is not None and isinstance(vis_mask, torch.Tensor):
+            vis_mask = vis_mask.detach().cpu().numpy()
+            # Reshape if needed
+            if vis_mask.ndim == 3 and vis_mask.shape[2] == 1:
+                vis_mask = vis_mask.squeeze(-1)
+        
+        T, N, _ = points.shape
+        H, W = video_size
+        
+        if vis_mask is None:
+            vis_mask = np.ones((T, N), dtype=bool)
+        
+        colors = np.zeros((N, 3), dtype=np.uint8)
+        
+        first_frame_pts = points[0]
+        
+        u_min, u_max = 0, W
+        u_normalized = np.clip((first_frame_pts[:, 0] - u_min) / (u_max - u_min), 0, 1)
+        colors[:, 0] = (u_normalized * 255).astype(np.uint8)
+        
+        v_min, v_max = 0, H
+        v_normalized = np.clip((first_frame_pts[:, 1] - v_min) / (v_max - v_min), 0, 1)
+        colors[:, 1] = (v_normalized * 255).astype(np.uint8)
+        
+        z_values = first_frame_pts[:, 2]
+        if np.all(z_values == 0):
+            colors[:, 2] = np.random.randint(0, 256, N, dtype=np.uint8)
+        else:
+            inv_z = 1 / (z_values + 1e-10)
+            p2 = np.percentile(inv_z, 2)
+            p98 = np.percentile(inv_z, 98)
+            normalized_z = np.clip((inv_z - p2) / (p98 - p2 + 1e-10), 0, 1)
+            colors[:, 2] = (normalized_z * 255).astype(np.uint8)
+        
+        frames = []
+        
+        for i in tqdm(range(T), desc="rendering frames"):
+            pts_i = points[i]
+            
+            visibility = vis_mask[i]
+            
+            pixels, depths = pts_i[visibility, :2], pts_i[visibility, 2]
+            pixels = pixels.astype(int)
+            
+            in_frame = self.valid_mask(pixels, W, H) 
+            pixels = pixels[in_frame]
+            depths = depths[in_frame]
+            frame_rgb = colors[visibility][in_frame]
+            
+            img = Image.fromarray(np.zeros((H, W, 3), dtype=np.uint8), mode="RGB")
+            
+            sorted_pixels, _, sort_index = self.sort_points_by_depth(pixels, depths)
+            sorted_rgb = frame_rgb[sort_index]
+            
+            for j in range(sorted_pixels.shape[0]):
+                self.draw_rectangle(
+                    img,
+                    coord=(sorted_pixels[j, 0], sorted_pixels[j, 1]),
+                    side_length=point_wise,
+                    color=sorted_rgb[j],
+                )
+            
+            frames.append(np.array(img))
+        
+        # Convert frames to video tensor in range [0,1]
+        tracking_video = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 255.0
+
+        tracking_path = None
+        if save_tracking:
+            try:
+                tracking_path = os.path.join(self.output_dir, "tracking_video_cotracker.mp4")
+                # Convert back to uint8 for saving
+                uint8_frames = [frame.astype(np.uint8) for frame in frames]
+                clip = ImageSequenceClip(uint8_frames, fps=self.fps)
+                clip.write_videofile(tracking_path, codec="libx264", fps=self.fps, logger=None)
+                print(f"Video saved to {tracking_path}")
+            except Exception as e:
+                print(f"Warning: Failed to save tracking video: {e}")
+                tracking_path = None
+
+        return tracking_path, tracking_video
+
     
     def apply_tracking(self, video_tensor, fps=8, tracking_tensor=None, img_cond_tensor=None, prompt=None, checkpoint_path=None):
         """Generate final video with motion transfer
@@ -472,7 +600,7 @@ class DiffusionAsShaderPipeline:
             tracking_tensor=tracking_tensor,
             image_tensor=img_cond_tensor,
             output_path=final_output,
-            num_inference_steps=50,
+            num_inference_steps=25,
             guidance_scale=6.0,
             dtype=torch.bfloat16,
             fps=self.fps
@@ -591,48 +719,158 @@ class CameraMotionGenerator:
             fx = fy = (W / 2) / math.tan(fov_rad / 2)
  
         self.intr[0, 0] = fx
-        self.intr[1, 1] = fy        
+        self.intr[1, 1] = fy   
 
-    def _apply_poses(self, pts, poses):
+        self.extr = torch.eye(4, device=device)
+
+    def s2w_vggt(self, points, extrinsics, intrinsics):
         """
+        Transform points from pixel coordinates to world coordinates
+        
         Args:
-            pts (torch.Tensor): pointclouds coordinates [T, N, 3]
-            intr (torch.Tensor): camera intrinsics [T, 3, 3]
-            poses (numpy.ndarray): camera poses [T, 4, 4]
+            points: Point cloud data of shape [T, N, 3] in uvz format
+            extrinsics: Camera extrinsic matrices [B, T, 3, 4] or [T, 3, 4]
+            intrinsics: Camera intrinsic matrices [B, T, 3, 3] or [T, 3, 3]
+            
+        Returns:
+            world_points: Point cloud in world coordinates [T, N, 3]
         """
-        if isinstance(poses, np.ndarray):
-            poses = torch.from_numpy(poses)
-
-        intr = self.intr.unsqueeze(0).repeat(self.frame_num, 1, 1).to(torch.float)
-        T, N, _ = pts.shape
-        ones = torch.ones(T, N, 1, device=self.device, dtype=torch.float)
-        pts_hom = torch.cat([pts[:, :, :2], ones], dim=-1)  # (T, N, 3)
-        pts_cam = torch.bmm(pts_hom, torch.linalg.inv(intr).transpose(1, 2))  # (T, N, 3)
-        pts_cam[:,:, :3] *= pts[:, :, 2:3]
-
-        # to homogeneous
-        pts_cam = torch.cat([pts_cam, ones], dim=-1)  # (T, N, 4)
+        if isinstance(points, torch.Tensor):
+            points = points.detach().cpu().numpy()
         
-        if poses.shape[0] == 1:
-            poses = poses.repeat(T, 1, 1)
-        elif poses.shape[0] != T:
-            raise ValueError(f"Poses length ({poses.shape[0]}) must match sequence length ({T})")
+        if isinstance(extrinsics, torch.Tensor):
+            extrinsics = extrinsics.detach().cpu().numpy()
+            # Handle batch dimension
+            if extrinsics.ndim == 4:  # [B, T, 3, 4]
+                extrinsics = extrinsics[0]  # Take first batch
+            
+        if isinstance(intrinsics, torch.Tensor):
+            intrinsics = intrinsics.detach().cpu().numpy()
+            # Handle batch dimension
+            if intrinsics.ndim == 4:  # [B, T, 3, 3]
+                intrinsics = intrinsics[0]  # Take first batch
+            
+        T, N, _ = points.shape
+        world_points = np.zeros_like(points)
         
-        poses = poses.to(torch.float).to(self.device)
-        pts_world = torch.bmm(pts_cam, poses.transpose(1, 2))[:, :, :3]  # (T, N, 3)
-        pts_proj = torch.bmm(pts_world, intr.transpose(1, 2))  # (T, N, 3)
-        pts_proj[:, :, :2] /= pts_proj[:, :, 2:3]
+        # Extract uvz coordinates
+        uvz = points
+        valid_mask = uvz[..., 2] > 0
+        
+        # Create homogeneous coordinates [u, v, 1]
+        uv_homogeneous = np.concatenate([uvz[..., :2], np.ones((T, N, 1))], axis=-1)
+        
+        # Transform from pixel to camera coordinates
+        for i in range(T):
+            K = intrinsics[i]
+            K_inv = np.linalg.inv(K)
+            
+            R = extrinsics[i, :, :3]
+            t = extrinsics[i, :, 3]
+            
+            R_inv = np.linalg.inv(R)
+            
+            valid_indices = np.where(valid_mask[i])[0]
+            
+            if len(valid_indices) > 0:
+                valid_uv = uv_homogeneous[i, valid_indices]
+                valid_z = uvz[i, valid_indices, 2]
+                
+                valid_xyz_camera = valid_uv @ K_inv.T
+                valid_xyz_camera = valid_xyz_camera * valid_z[:, np.newaxis]
+                
+                # Transform from camera to world coordinates: X_world = R^-1 * (X_camera - t)
+                valid_world_points = (valid_xyz_camera - t) @ R_inv.T
+                
+                world_points[i, valid_indices] = valid_world_points
+        
+        return world_points
 
-        return pts_proj
+    def w2s_vggt(self, world_points, extrinsics, intrinsics, poses=None):
+        """
+        Project points from world coordinates to camera view
+        
+        Args:
+            world_points: Point cloud in world coordinates [T, N, 3]
+            extrinsics: Original camera extrinsic matrices [B, T, 3, 4] or [T, 3, 4]
+            intrinsics: Camera intrinsic matrices [B, T, 3, 3] or [T, 3, 3]
+            poses: Camera pose matrices [T, 4, 4], if None use first frame extrinsics
+            
+        Returns:
+            camera_points: Point cloud in camera coordinates [T, N, 3] in uvz format
+        """
+        if isinstance(world_points, torch.Tensor):
+            world_points = world_points.detach().cpu().numpy()
+            
+        if isinstance(extrinsics, torch.Tensor):
+            extrinsics = extrinsics.detach().cpu().numpy()
+            if extrinsics.ndim == 4:
+                extrinsics = extrinsics[0]
+            
+        if isinstance(intrinsics, torch.Tensor):
+            intrinsics = intrinsics.detach().cpu().numpy()
+            if intrinsics.ndim == 4:
+                intrinsics = intrinsics[0]
+            
+        T, N, _ = world_points.shape
+        
+        # If no poses provided, use first frame extrinsics
+        if poses is None:
+            pose1 = np.eye(4)
+            pose1[:3, :3] = extrinsics[0, :, :3]
+            pose1[:3, 3] = extrinsics[0, :, 3]
+            
+            camera_poses = np.tile(pose1[np.newaxis, :, :], (T, 1, 1))
+        else:
+            if isinstance(poses, torch.Tensor):
+                camera_poses = poses.cpu().numpy()
+            else:
+                camera_poses = poses
+            
+            # Scale translation by 1/5
+            scaled_poses = camera_poses.copy()
+            scaled_poses[:, :3, 3] = camera_poses[:, :3, 3] / 5.0
+            camera_poses = scaled_poses
+        
+        # Add homogeneous coordinates
+        ones = np.ones([T, N, 1])
+        world_points_hom = np.concatenate([world_points, ones], axis=-1)
+        
+        # Transform points using batch matrix multiplication
+        pts_cam_hom = np.matmul(world_points_hom, np.transpose(camera_poses, (0, 2, 1)))
+        pts_cam = pts_cam_hom[..., :3]
+        
+        # Extract depth information
+        depths = pts_cam[..., 2:3]
+        valid_mask = depths[..., 0] > 0
+        
+        # Normalize coordinates
+        normalized_pts = pts_cam / (depths + 1e-10)
+        
+        # Apply intrinsic matrix for projection
+        pts_pixel = np.matmul(normalized_pts, np.transpose(intrinsics, (0, 2, 1)))
+        
+        # Extract pixel coordinates
+        u = pts_pixel[..., 0:1]
+        v = pts_pixel[..., 1:2]
+        
+        # Set invalid points to zero
+        u[~valid_mask] = 0
+        v[~valid_mask] = 0
+        depths[~valid_mask] = 0
+        
+        # Return points in uvz format
+        result = np.concatenate([u, v, depths], axis=-1)
+        
+        return torch.from_numpy(result)
     
-    def w2s(self, pts, poses):
+    def w2s_moge(self, pts, poses):
         if isinstance(poses, np.ndarray):
             poses = torch.from_numpy(poses)
         assert poses.shape[0] == self.frame_num
         poses = poses.to(torch.float32).to(self.device)
         T, N, _ = pts.shape  # (T, N, 3)
         intr = self.intr.unsqueeze(0).repeat(self.frame_num, 1, 1)
-        # Step 1: 扩展点的维度，使其变成 (T, N, 4)，最后一维填充1 (齐次坐标)
         ones = torch.ones((T, N, 1), device=self.device, dtype=pts.dtype)
         points_world_h = torch.cat([pts, ones], dim=-1)
         points_camera_h = torch.bmm(poses, points_world_h.permute(0, 2, 1))
@@ -641,21 +879,20 @@ class CameraMotionGenerator:
         points_image_h = torch.bmm(points_camera, intr.permute(0, 2, 1))
 
         uv = points_image_h[:, :, :2] / points_image_h[:, :, 2:3]
-
-        # Step 5: 提取深度 (Z) 并拼接
         depth = points_camera[:, :, 2:3]  # (T, N, 1)
         uvd = torch.cat([uv, depth], dim=-1)  # (T, N, 3)
 
-        return uvd  # 屏幕坐标 + 深度 (T, N, 3)
-
-    def apply_motion_on_pts(self, pts, camera_motion):
-        tracking_pts = self._apply_poses(pts.squeeze(), camera_motion).unsqueeze(0)
-        return tracking_pts
+        return uvd
     
     def set_intr(self, K):
         if isinstance(K, np.ndarray):
             K = torch.from_numpy(K)
         self.intr = K.to(self.device)
+
+    def set_extr(self, extr):
+        if isinstance(extr, np.ndarray):    
+            extr = torch.from_numpy(extr)
+        self.extr = extr.to(self.device)
 
     def rot_poses(self, angle, axis='y'):
         """Generate a single rotation matrix
@@ -775,26 +1012,6 @@ class CameraMotionGenerator:
         camera_poses = np.concatenate(cam_poses, axis=0)
         return torch.from_numpy(camera_poses).to(self.device)
 
-    def rot(self, pts, angle, axis):
-        """
-        pts: torch.Tensor, (T, N, 2)
-        """
-        rot_mats = self.rot_poses(angle, axis)
-        pts = self.apply_motion_on_pts(pts, rot_mats)
-        return pts
-    
-    def trans(self, pts, dx, dy, dz):
-        if pts.shape[-1] != 3:
-            raise ValueError("points should be in the 3d coordinate.")
-        trans_mats = self.trans_poses(dx, dy, dz)
-        pts = self.apply_motion_on_pts(pts, trans_mats)
-        return pts
-
-    def spiral(self, pts, radius):
-        spiral_poses = self.spiral_poses(radius)
-        pts = self.apply_motion_on_pts(pts, spiral_poses)
-        return pts
-
     def get_default_motion(self):
         """Parse motion parameters and generate corresponding motion matrices
         
@@ -812,6 +1029,7 @@ class CameraMotionGenerator:
             - if not specified, defaults to 0-49
             - frames after end_frame will maintain the final transformation
             - for combined transformations, they are applied in sequence
+            - moving left, up and zoom out is positive in video
         
         Returns:
             torch.Tensor: Motion matrices [num_frames, 4, 4]
